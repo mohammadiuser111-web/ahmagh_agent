@@ -73,8 +73,9 @@ function parseMaybeJson(result: unknown): any | null {
 }
 
 async function callModel(env: Env, model: string, input: unknown): Promise<unknown> {
-  const run = env.AI.run as unknown as (m: string, i: unknown) => Promise<unknown>;
-  return run(model, input);
+  // ⚠️ حتماً به‌صورت env.AI.run(...) صدا زده شود — جدا کردن متد از this
+  // باعث «Cannot set properties of undefined (setting '#options')» می‌شود
+  return (env.AI as unknown as { run: (m: string, i: unknown) => Promise<unknown> }).run(model, input);
 }
 
 /**

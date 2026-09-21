@@ -483,7 +483,8 @@ async function sendTaskInfo(env: Env, msg: any, arg: string): Promise<void> {
 // ============================================================
 
 async function cmdSetStatus(env: Env, msg: any, arg: string): Promise<void> {
-  const m = enDigits(arg).match(/^(\d+)\s+(\S+)$/);
+  // وضعیت می‌تواند چندکلمه‌ای باشد: «در حال انجام»، «شروع نشده»
+  const m = enDigits(arg).match(/^(\d+)\s+(.+)$/);
   if (!m) {
     await sendMessage(
       env,
@@ -491,8 +492,8 @@ async function cmdSetStatus(env: Env, msg: any, arg: string): Promise<void> {
       `📝 شکل درست: <code>/status &lt;شناسه&gt; &lt;وضعیت&gt;</code>
 
 وضعیت‌های مجاز:
-• not_started (شروع_نشده)
-• in_progress (در_حال_انجام)
+• not_started (شروع نشده)
+• in_progress (در حال انجام)
 • done (تمام)`
     );
     return;
