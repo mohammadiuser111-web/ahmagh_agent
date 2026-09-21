@@ -108,7 +108,7 @@ ahmagh_agent/
 ### ۲) کلون و نصب
 
 ```bash
-git clone https://github.com/USERNAME/ahmagh_agent.git
+git clone https://github.com/mohammadiuser111-web/ahmagh_agent.git
 cd ahmagh_agent
 npm install
 ```
