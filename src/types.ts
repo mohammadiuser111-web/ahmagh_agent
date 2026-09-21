@@ -15,6 +15,8 @@ export interface Env {
   TELEGRAM_BOT_USERNAME: string;
   /** مدل Workers AI برای استخراج تسک — بدون تغییر کد قابل تعویض است */
   AI_MODEL: string;
+  /** مدل جایگزین اگر مدل اصلی خطا داد (مثلاً به‌خاطر نیاز به پلن پولی) */
+  AI_FALLBACK_MODEL: string;
 }
 
 export type TaskStatus = "not_started" | "in_progress" | "done";
@@ -28,9 +30,12 @@ export interface TaskRow {
   assignee_id: number;
   status: TaskStatus;
   start_date: string | null;   // تاریخ شروع برنامه‌ای (YYYY-MM-DD)
+  start_at: string | null;     // زمان شروع دقیق اگر ساعت گفته شده باشد (ISO 8601 +03:30)
   started_at: string | null;   // لحظه‌ی واقعی شروع (ISO 8601)
   due_date: string | null;     // تاریخ پایان / سررسید (YYYY-MM-DD)
+  due_at: string | null;       // زمان سررسید دقیق اگر ساعت گفته شده باشد (ISO 8601 +03:30)
   completed_at: string | null; // لحظه‌ی واقعی اتمام (ISO 8601)
+  auto_start: number;          // 1 = با رسیدن زمان شروع، خودکار «در حال انجام» شود
   created_at: string;
   last_reminded_at: string | null;
   reminder_count: number;
@@ -54,6 +59,7 @@ export interface PendingDraft {
   assignee_id: number;
   status: TaskStatus;
   start_date: string | null;
+  start_at: string | null;
 }
 
 /** ردیف جدول pending_tasks */
@@ -72,6 +78,8 @@ export interface ParsedTask {
   /** نام/یوزرنیم مسئول؛ "" یعنی خودِ گوینده */
   assignee_name: string;
   start_date: string; // "" اگر نگفته باشد
+  start_time: string; // "HH:MM" یا "" اگر ساعت نگفته باشد
   due_date: string;   // "" اگر نگفته باشد
+  due_time: string;   // "HH:MM" یا "" اگر ساعت نگفته باشد
   status: TaskStatus;
 }

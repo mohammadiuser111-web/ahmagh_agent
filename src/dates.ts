@@ -216,3 +216,68 @@ export function parseRelativeFaDate(text: string, todayISO: string): string {
 
   return "";
 }
+
+/** تبدیل بخشِ روز: «۵ عصر» → ۱۷ ، «۳ ظهر» → ۱۵ ، «۱۰ شب» → ۲۲ (ورودی/خروجی ۲۴تایی) */
+function applyDayPart(h: number, part: string | undefined): number {
+  if (!part) return h;
+  if (part === "ظهر") return h === 12 ? 12 : h < 12 ? h + 12 : h;
+  if (part === "عصر") return h < 12 ? h + 12 : h;
+  if (part === "شب") return h >= 5 && h < 12 ? h + 12 : h;
+  return h; // صبح / بامداد
+}
+
+/**
+ * استخراج ساعت از متن فارسی — «ساعت ۱۰:۳۰ عصر» → ۲۲:۳۰ ، «۱۲ ظهر» → ۱۲:۰۰ ، «۸ صبح» → ۰۸:۰۰
+ * فقط وقتی ساعت واقعاً گفته شده (کلیدواژه‌ی «ساعت»، فرمت HH:MM یا بخشِ روز)؛ وگرنه null.
+ * خروجی: دقیقه از نیمه‌شب، یا null
+ */
+export function parseFaTimeOfDay(text: string): number | null {
+  const t = enDigits(text)
+    .replace(/\u200c/g, " ")
+    .replace(/بعد\s*از\s*ظهر/g, "عصر")
+    .replace(/بعدازظهر/g, "عصر");
+  if (/نیمه\s*شب/.test(t)) return 0;
+
+  let m = t.match(/(\d{1,2}):(\d{2})\s*(صبح|ظهر|عصر|شب|بامداد)?/); // فرمت HH:MM
+  if (m) {
+    const h = applyDayPart(Number(m[1]), m[3]);
+    const min = Number(m[2]);
+    return h <= 23 && min <= 59 ? h * 60 + min : null;
+  }
+  m = t.match(/ساعت\s*(\d{1,2})(?::(\d{2}))?\s*(صبح|ظهر|عصر|شب|بامداد)?/); // «ساعت ۸» / «ساعت ۸ صبح»
+  if (m) {
+    const h = applyDayPart(Number(m[1]), m[3]);
+    const min = Number(m[2] ?? 0);
+    return h <= 23 && min <= 59 ? h * 60 + min : null;
+  }
+  m = t.match(/(\d{1,2})\s*(صبح|ظهر|عصر|شب|بامداد)/); // «۵ عصر»
+  if (m) {
+    const h = applyDayPart(Number(m[1]), m[2]);
+    return h <= 23 ? h * 60 : null;
+  }
+  return null;
+}
+
+export interface FaDateTime {
+  date: string;        // YYYY-MM-DD یا ""
+  time: string | null; // "HH:MM" یا null
+}
+
+/** تاریخ + ساعت از متن فارسی (بدون AI) */
+export function parseRelativeFaDateTime(text: string, todayISO: string): FaDateTime {
+  const date = parseRelativeFaDate(text, todayISO);
+  const minutes = parseFaTimeOfDay(text);
+  return {
+    date,
+    time: minutes === null ? null : `${pad2(Math.floor(minutes / 60))}:${pad2(minutes % 60)}`,
+  };
+}
+
+/** «۲۲:۳۰» از یک timestamp (به وقت تهران) */
+export function fmtTimeTehran(ts: string | null | undefined): string {
+  if (!ts) return "";
+  const d = new Date(toIsoTs(ts));
+  if (Number.isNaN(d.getTime())) return "";
+  const tehran = new Date(d.getTime() + TEHRAN_OFFSET_MS);
+  return faDigits(`${pad2(tehran.getUTCHours())}:${pad2(tehran.getUTCMinutes())}`);
+}

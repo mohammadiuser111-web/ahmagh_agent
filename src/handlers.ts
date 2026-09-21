@@ -15,21 +15,23 @@ import {
   listTasks,
   recentUsers,
   savePendingTask,
+  setTaskFields,
   updateTaskStatus,
   upsertUser,
 } from "./db";
-import { extractDueDate, extractTask } from "./ai";
+import { extractDueDateTime, extractTask } from "./ai";
 import { answerCallbackQuery, editMessageText, escapeHtml, sendMessage } from "./telegram";
 import {
   STATUS_EMOJI,
   STATUS_LABEL,
   displayName,
+  normalizeEditField,
   parseStatus,
   statusKeyboard,
   taskCard,
   truncate,
 } from "./format";
-import { enDigits, faDigits, fmtDate, parseRelativeFaDate, todayTehranISO } from "./dates";
+import { enDigits, faDigits, fmtDate, fmtTimeTehran, parseRelativeFaDateTime, todayTehranISO } from "./dates";
 
 /** واژه‌ی بیدارکننده‌ی بات 😄 */
 const TRIGGER_RE = /احمق|ahmagh/i;
@@ -44,6 +46,7 @@ const WELCOME = `سلام! من <b>احمق‌ایجنت</b> هستم 🤖
 📌 عنوان و توضیحات
 👷 مسئول (اگه اسمش رو بگی)
 📅 تاریخ شروع (اگه نگفی = امروز) و تاریخ پایان (اجباری — اگه نگفی، می‌پرسم!)
+🕐 ساعت هم قبوله: «تا فردا ساعت ۱۰:۳۰ عصر» یا «تا شنبه ۱۲ ظهر»
 🚦 وضعیت اولیه
 
 با رسیدن تاریخ شروع، تسک خودکار «در حال انجام» می‌شه و تا تمومش نکنی هم یادآوری می‌کنم 😈
@@ -65,6 +68,7 @@ const HELP = `🤖 <b>راهنمای احمق‌ایجنت</b>
 /status &lt;شناسه&gt; &lt;وضعیت&gt; — تغییر وضعیت
 /done &lt;شناسه&gt; — علامت‌گذاری به‌عنوان تمام‌شده
 /assign &lt;شناسه&gt; @یوزرنیم — واگذاری به کس دیگه
+/edit &lt;شناسه&gt; &lt;فیلد&gt;: &lt;مقدار&gt; — ویرایش (عنوان/توضیح/مسئول/شروع/پایان/وضعیت)
 /delete &lt;شناسه&gt; — حذف تسک
 /help — همین راهنما
 
@@ -74,9 +78,10 @@ const HELP = `🤖 <b>راهنمای احمق‌ایجنت</b>
 💡 زیر کارت هر تسک، دکمه‌ی تغییر وضعیت هم هست.
 
 <b>نکته‌ها:</b>
-• تاریخ پایان اجباریه — اگه تو متن نگی، جدا می‌پرسم و فقط جواب می‌دی (مثلاً: تا فردا)
+• تاریخ پایان اجباریه — اگه تو متن نگی، جدا می‌پرسم و فقط جواب می‌دی (مثلاً: فردا / پنجشنبه / فردا ساعت ۵ عصر)
 • اگه تاریخ شروع نگفی، امروز حساب می‌شه
-• با رسیدن تاریخ شروع، وضعیت خودکار «در حال انجام» می‌شه 🚦`;
+• ساعت هم می‌فهمم: «تا فردا ساعت ۱۰:۳۰ عصر» یا «تا شنبه ۱۲ ظهر»
+• با رسیدن زمان شروع، وضعیت خودکار «در حال انجام» می‌شه 🚦`;
 
 const HINT = `من فقط وقتی کامل بیدار می‌شم که صدام کنی «احمق» 😅
 
@@ -163,6 +168,9 @@ async function onCommand(env: Env, msg: any, text: string): Promise<void> {
     case "/assign":
       await cmdAssign(env, msg, arg);
       return;
+    case "/edit":
+      await cmdEdit(env, msg, arg);
+      return;
     case "/delete":
     case "/del":
       await cmdDelete(env, msg, arg);
@@ -198,6 +206,9 @@ async function createTaskFromText(env: Env, msg: any, text: string): Promise<voi
   const today = todayTehranISO();
   // 🐛 باگ‌فیکس: تاریخ شروع نگفته شده؟ پیش‌فرض = امروز (نه خالی)
   const start_date = parsed.start_date || today;
+  // ⏰ ساعت شروع/پایان اگر گفته شده باشد → timestamp کامل با offset تهران
+  const start_at = parsed.start_time ? `${start_date}T${parsed.start_time}:00+03:30` : null;
+  const due_at = parsed.due_date && parsed.due_time ? `${parsed.due_date}T${parsed.due_time}:00+03:30` : null;
 
   // 📌 تاریخ پایان اجباری است — اگر نگفته، از کاربر بپرس
   if (!parsed.due_date) {
@@ -209,6 +220,7 @@ async function createTaskFromText(env: Env, msg: any, text: string): Promise<voi
         assignee_id: assignee.user_id,
         status: parsed.status,
         start_date,
+        start_at,
       });
       await sendMessage(
         env,
@@ -235,7 +247,9 @@ async function createTaskFromText(env: Env, msg: any, text: string): Promise<voi
       assignee,
       status: parsed.status,
       start_date,
+      start_at,
       due_date: parsed.due_date,
+      due_at,
     },
     note
   );
@@ -252,10 +266,17 @@ async function createAndAnnounceTask(
     assignee: UserRow;
     status: TaskStatus;
     start_date: string | null;
+    start_at: string | null;
     due_date: string;
+    due_at: string | null;
   },
   note?: string | null
 ): Promise<void> {
+  // 🚦 اگر شروع در آینده باشد، با رسیدنش خودکار «در حال انجام» می‌شود
+  const startInFuture =
+    (fields.start_at !== null && Date.parse(fields.start_at) > Date.now()) ||
+    (fields.start_date !== null && fields.start_date > todayTehranISO());
+
   const task = (await createTask(env, {
     title: fields.title,
     description: fields.description,
@@ -263,15 +284,21 @@ async function createAndAnnounceTask(
     assignee_id: fields.assignee.user_id,
     status: fields.status,
     start_date: fields.start_date,
+    start_at: fields.start_at,
     due_date: fields.due_date,
+    due_at: fields.due_at,
+    auto_start: startInFuture,
   }))!;
   const creator = await getUser(env, fields.creator_id);
-  const today = todayTehranISO();
 
   const notes: string[] = [];
   if (note) notes.push(note);
-  if (fields.start_date && fields.start_date > today) {
-    notes.push(`از ${fmtDate(fields.start_date)} به‌صورت خودکار «در حال انجام» می‌شه 🚦`);
+  if (startInFuture && fields.start_date) {
+    notes.push(
+      fields.start_at
+        ? `از ${fmtDate(fields.start_date)} ساعت ${fmtTimeTehran(fields.start_at)} به‌صورت خودکار «در حال انجام» می‌شه 🚦`
+        : `از ${fmtDate(fields.start_date)} به‌صورت خودکار «در حال انجام» می‌شه 🚦`
+    );
   }
 
   await sendMessage(
@@ -315,19 +342,16 @@ async function tryPendingDeadlineReply(env: Env, msg: any, text: string): Promis
   }
 
   // اول تاریخ را سریع و بدون AI دربیار؛ اگر نشد با AI
-  let due = parseRelativeFaDate(clean, todayTehranISO());
-  if (!due) {
-    const aiDue = await extractDueDate(env, clean);
-    if (/^\d{4}-\d{2}-\d{2}$/.test(aiDue)) due = aiDue;
-  }
-  if (!due) {
+  const deadline = await resolveDeadlineFromText(env, clean);
+  if (!deadline) {
     await sendMessage(
       env,
       msg.chat.id,
-      "🤔 تاریخ رو نفهمیدم! ساده‌تر بگو — مثلاً: «تا فردا»، «پنجشنبه» یا «۱۵ مهر».\n(لغو: بی‌خیال)"
+      "🤔 تاریخ رو نفهمیدم! ساده‌تر بگو — مثلاً: «فردا»، «پنجشنبه»، «۱۵ مهر» یا «فردا ساعت ۵ عصر».\n(لغو: بی‌خیال)"
     );
     return true;
   }
+  const due_at = deadline.time ? `${deadline.date}T${deadline.time}:00+03:30` : null;
 
   await deletePendingTask(env, msg.from.id);
   const draft = JSON.parse(pending.draft) as PendingDraft;
@@ -347,9 +371,29 @@ async function tryPendingDeadlineReply(env: Env, msg: any, text: string): Promis
       },
     status: draft.status,
     start_date: draft.start_date,
-    due_date: due,
+    start_at: draft.start_at,
+    due_date: deadline.date,
+    due_at,
   });
   return true;
+}
+
+/** تبدیل متن جواب کوتاه کاربر به تاریخ + ساعت (اول هیوریستیک، بعد AI) */
+async function resolveDeadlineFromText(
+  env: Env,
+  text: string
+): Promise<{ date: string; time: string | null } | null> {
+  const today = todayTehranISO();
+  const dt = parseRelativeFaDateTime(text, today);
+  let date = dt.date || (dt.time ? today : ""); // فقط ساعت گفته؟ → امروز
+  let time = dt.time;
+  if (!date) {
+    const ai = await extractDueDateTime(env, text);
+    if (ai.date) date = ai.date;
+    if (ai.time && !time) time = ai.time;
+  }
+  if (!date) return null;
+  return { date, time };
 }
 
 /** تبدیل نام مسئول (از متن کاربر) به کاربر واقعی ثبت‌شده */
@@ -555,6 +599,152 @@ async function cmdDelete(env: Env, msg: any, arg: string): Promise<void> {
     env,
     msg.chat.id,
     `🗑 تسک ${faDigits(id)} («${escapeHtml(truncate(task.title, 60))}») حذف شد.`
+  );
+}
+
+
+// ============================================================
+// /edit — ویرایش فیلدهای تسک
+// ============================================================
+
+const EDIT_USAGE = `<b>✏️ ویرایش تسک</b>
+
+شکل: <code>/edit &lt;شناسه&gt; &lt;فیلد&gt;: &lt;مقدار&gt;</code>
+
+فیلدهای مجاز:
+• <b>عنوان</b> — <code>/edit 12 عنوان: خرید نون</code>
+• <b>توضیح</b> — <code>/edit 12 توضیح: از نانوایی سر کوچه</code>
+• <b>مسئول</b> — <code>/edit 12 مسئول: علی</code> یا <code>/edit 12 مسئول: خودم</code>
+• <b>شروع</b> — <code>/edit 12 شروع: شنبه ساعت ۸ صبح</code>
+• <b>پایان</b> — <code>/edit 12 پایان: فردا ۱۲ ظهر</code> (یا: ۱۵ مهر)
+• <b>وضعیت</b> — <code>/edit 12 وضعیت: در حال انجام</code>`;
+
+async function cmdEdit(env: Env, msg: any, arg: string): Promise<void> {
+  const parts = arg.trim().split(/\s+/);
+  const id = Number(enDigits(parts[0] || ""));
+  const restRaw = arg.trim().slice((parts[0] || "").length).trim();
+  if (!id || !restRaw) {
+    await sendMessage(env, msg.chat.id, EDIT_USAGE);
+    return;
+  }
+
+  // «فیلد: مقدار» یا «فیلد مقدار» (بدون دونقطه)
+  const colon = restRaw.search(/[:：]/);
+  let fieldRaw: string;
+  let value: string;
+  if (colon >= 0) {
+    fieldRaw = restRaw.slice(0, colon);
+    value = restRaw.slice(colon + 1).trim();
+  } else {
+    const vp = restRaw.split(/\s+/);
+    fieldRaw = vp[0] || "";
+    value = vp.slice(1).join(" ");
+  }
+  const field = normalizeEditField(fieldRaw);
+  if (!field || !value.trim()) {
+    await sendMessage(env, msg.chat.id, EDIT_USAGE);
+    return;
+  }
+
+  const task = await getTask(env, id);
+  if (!task) {
+    await sendMessage(env, msg.chat.id, `❌ تسکی با شناسه‌ی ${faDigits(id)} پیدا نشد.`);
+    return;
+  }
+  if (msg.from.id !== task.creator_id && msg.from.id !== task.assignee_id) {
+    await sendMessage(env, msg.chat.id, "این تسک رو فقط سازنده‌ش یا مسئولش می‌تونه ویرایش کنه 😐");
+    return;
+  }
+
+  const updates: Record<string, string | number | null> = {};
+  let note = "";
+  const today = todayTehranISO();
+
+  switch (field) {
+    case "title":
+      updates.title = value.trim();
+      note = "عنوان عوض شد.";
+      break;
+    case "description":
+      updates.description = value.trim();
+      note = "توضیح عوض شد.";
+      break;
+    case "assignee": {
+      const { user, note: assignNote } = await resolveAssignee(env, value, msg.from.id);
+      updates.assignee_id = user.user_id;
+      note = `مسئول جدید: ${escapeHtml(displayName(user))}`;
+      if (assignNote) note += `\n${assignNote}`;
+      break;
+    }
+    case "start": {
+      const dt = parseRelativeFaDateTime(value, today);
+      const date = dt.date || (dt.time ? task.start_date || today : "");
+      if (!date) {
+        await sendMessage(
+          env,
+          msg.chat.id,
+          "🤔 تاریخ شروع رو نفهمیدم! مثلاً: «شنبه»، «۱۵ مهر» یا «فردا ساعت ۸ صبح»."
+        );
+        return;
+      }
+      const start_at = dt.time ? `${date}T${dt.time}:00+03:30` : null;
+      const future = (start_at !== null && Date.parse(start_at) > Date.now()) || date > today;
+      updates.start_date = date;
+      updates.start_at = start_at;
+      // اگر شروع هنوز نرسیده و تسک شروع‌نشده است، شروعِ خودکار دوباره مسلح می‌شود
+      updates.auto_start = future && task.status === "not_started" ? 1 : 0;
+      note =
+        "زمان شروع آپدیت شد." + (future && task.status === "not_started" ? " ⏱ شروع خودکار فعال شد." : "");
+      break;
+    }
+    case "due": {
+      const deadline = await resolveDeadlineFromText(env, value);
+      if (!deadline) {
+        await sendMessage(
+          env,
+          msg.chat.id,
+          "🤔 تاریخ پایان رو نفهمیدم! مثلاً: «فردا»، «پنجشنبه»، «۱۵ مهر» یا «فردا ساعت ۵ عصر»."
+        );
+        return;
+      }
+      updates.due_date = deadline.date;
+      updates.due_at = deadline.time ? `${deadline.date}T${deadline.time}:00+03:30` : null;
+      // یادآوری‌ها از نو شروع بشن
+      updates.last_reminded_at = new Date().toISOString();
+      updates.reminder_count = 0;
+      note = "زمان پایان آپدیت شد.";
+      break;
+    }
+    case "status": {
+      const st = parseStatus(value);
+      if (!st) {
+        await sendMessage(
+          env,
+          msg.chat.id,
+          "وضعیت معتبر نیست. گزینه‌ها: <i>شروع‌نشده</i> / <i>در حال انجام</i> / <i>تمام‌شده</i>"
+        );
+        return;
+      }
+      updates.status = st;
+      if (st === "done") updates.completed_at = new Date().toISOString();
+      if (st === "in_progress" && !task.started_at) updates.started_at = new Date().toISOString();
+      note = "وضعیت عوض شد.";
+      break;
+    }
+  }
+
+  const updated = await setTaskFields(env, id, updates);
+  if (!updated) {
+    await sendMessage(env, msg.chat.id, "❌ خطا در ذخیره‌ی تغییرات.");
+    return;
+  }
+  const creator = await getUser(env, updated.creator_id);
+  const assignee = await getUser(env, updated.assignee_id);
+  await sendMessage(
+    env,
+    msg.chat.id,
+    `✏️ ✅ ${note}\n\n${taskCard(updated, creator, assignee)}`,
+    { reply_markup: statusKeyboard(updated) }
   );
 }
 

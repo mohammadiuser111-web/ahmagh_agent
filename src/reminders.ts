@@ -24,13 +24,19 @@ export const REMINDER_INTERVALS_HOURS = {
  * - با نزدیک شدن سررسید، بازه‌ها کوتاه‌تر می‌شوند و بعد از سررسید تند می‌شود.
  */
 export function reminderIntervalHours(
-  task: Pick<TaskRow, "status" | "start_date" | "due_date">,
+  task: Pick<TaskRow, "status" | "start_date" | "start_at" | "due_date" | "due_at">,
   now: number = Date.now()
 ): number | null {
   if (task.status === "done") return null;
+  // قبل از موعدِ شروع اذیت نکن (اگر ساعت دقیق گفته شده، همان لحظه ملاک است)
+  if (task.start_at && now < Date.parse(task.start_at)) return null;
   if (task.start_date && now < startOfDayTehran(task.start_date)) return null;
-  if (!task.due_date) return REMINDER_INTERVALS_HOURS.noDueDate;
-  const dueAt = endOfDayTehran(task.due_date);
+
+  let dueAt: number;
+  if (task.due_at) dueAt = Date.parse(task.due_at);
+  else if (task.due_date) dueAt = endOfDayTehran(task.due_date);
+  else return REMINDER_INTERVALS_HOURS.noDueDate;
+
   if (now > dueAt) return REMINDER_INTERVALS_HOURS.overdue;
   const hoursLeft = (dueAt - now) / 3_600_000;
   if (hoursLeft <= 24) return REMINDER_INTERVALS_HOURS.dueSoon24h;
@@ -131,13 +137,17 @@ export async function runAutoStart(env: Env): Promise<void> {
   const today = todayTehranISO();
   const tasks = await tasksToAutoStart(env, today);
   if (!tasks.length) return;
+  let flipped = 0;
   for (const task of tasks) {
+    // اگر ساعتِ دقیق شروع هنوز نرسیده، فعلاً نشود
+    if (task.start_at && Date.parse(task.start_at) > Date.now()) continue;
     try {
       await env.DB.prepare(
-        "UPDATE tasks SET status = 'in_progress', started_at = COALESCE(started_at, ?) WHERE id = ?"
+        "UPDATE tasks SET status = 'in_progress', started_at = COALESCE(started_at, ?), auto_start = 0 WHERE id = ?"
       )
         .bind(new Date().toISOString(), task.id)
         .run();
+      flipped++;
 
       const assignee = await getUser(env, task.assignee_id);
       const creator = await getUser(env, task.creator_id);
@@ -155,5 +165,5 @@ export async function runAutoStart(env: Env): Promise<void> {
       console.error(`[auto-start] task ${task.id} failed:`, err);
     }
   }
-  console.log(`[auto-start] ${tasks.length} task(s) → in_progress`);
+  console.log(`[auto-start] ${flipped}/${tasks.length} task(s) → in_progress`);
 }

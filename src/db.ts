@@ -65,14 +65,17 @@ export interface NewTask {
   assignee_id: number;
   status: TaskStatus;
   start_date: string | null;
+  start_at: string | null;
   due_date: string | null;
+  due_at: string | null;
+  auto_start: boolean;
 }
 
 export async function createTask(env: Env, t: NewTask): Promise<TaskRow | null> {
   const now = new Date().toISOString();
   const res = await env.DB.prepare(
-    `INSERT INTO tasks (title, description, creator_id, assignee_id, status, start_date, due_date, created_at, last_reminded_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO tasks (title, description, creator_id, assignee_id, status, start_date, start_at, due_date, due_at, auto_start, created_at, last_reminded_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       t.title,
@@ -81,7 +84,10 @@ export async function createTask(env: Env, t: NewTask): Promise<TaskRow | null> 
       t.assignee_id,
       t.status,
       t.start_date,
+      t.start_at,
       t.due_date,
+      t.due_at,
+      t.auto_start ? 1 : 0,
       now,
       // اولین یادآوری بعد از یک بازه‌ی کامل بیاید، نه بلافاصله بعد از ساخت
       now
@@ -206,12 +212,33 @@ export async function cleanupPendingTasks(env: Env, olderThanHours = 6): Promise
   await env.DB.prepare("DELETE FROM pending_tasks WHERE created_at < ?").bind(cutoff).run();
 }
 
-/** تسک‌های «شروع‌نشده» که تاریخ شروعشان رسیده → باید خودکار «در حال انجام» شوند */
+/** تسک‌های «شروع‌نشده» با پرچم شروعِ خودکار که روزِ شروعشان رسیده */
 export async function tasksToAutoStart(env: Env, todayISO: string): Promise<TaskRow[]> {
   const { results } = await env.DB.prepare(
-    "SELECT * FROM tasks WHERE status = 'not_started' AND start_date IS NOT NULL AND start_date <= ? LIMIT 100"
+    "SELECT * FROM tasks WHERE status = 'not_started' AND auto_start = 1 AND start_date IS NOT NULL AND start_date <= ? LIMIT 100"
   )
     .bind(todayISO)
     .all<TaskRow>();
   return results ?? [];
+}
+
+/** آپدیت امن فیلدهای مجاز تسک (ستون‌ها whitelist می‌شوند) */
+const TASK_EDITABLE_COLUMNS = new Set([
+  "title", "description", "assignee_id", "status",
+  "start_date", "start_at", "due_date", "due_at", "auto_start",
+  "started_at", "completed_at", "last_reminded_at", "reminder_count",
+]);
+
+export async function setTaskFields(
+  env: Env,
+  id: number,
+  fields: Record<string, string | number | null>
+): Promise<TaskRow | null> {
+  const keys = Object.keys(fields).filter((k) => TASK_EDITABLE_COLUMNS.has(k));
+  if (keys.length) {
+    const sets = keys.map((k) => `${k} = ?`).join(", ");
+    const values = keys.map((k) => fields[k]);
+    await env.DB.prepare(`UPDATE tasks SET ${sets} WHERE id = ?`).bind(...values, id).run();
+  }
+  return getTask(env, id);
 }
