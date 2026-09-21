@@ -1,0 +1,32 @@
+name: Deploy
+
+# دیپلوی خودکار روی Cloudflare Workers بعد از هر پوش به main
+# (قالب رسمی Cloudflare: https://developers.cloudflare.com/workers/ci-cd/github-actions/)
+#
+# ⚙️ قبل از استفاده، در Settings → Secrets and variables → Actions
+#    سیکرت CLOUDFLARE_API_TOKEN را بسازید (توکنی با دسترسی:
+#    Account → Workers Scripts:Edit ، Workers D1:Edit ، Account Settings:Read)
+#    اگر CI نمی‌خواهید، همین فایل را حذف کنید و با `npm run deploy` دستی دیپلوی کنید.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply D1 migrations
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          command: d1 migrations apply ahmagh_agent --remote
+
+      - name: Deploy Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}

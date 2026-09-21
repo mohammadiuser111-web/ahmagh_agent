@@ -1,0 +1,8 @@
+# یک کپی از این فایل با نام «.dev.vars» بسازید و مقادیر واقعی را بگذارید.
+# (فایل .dev.vars در .gitignore است و هرگز commit نمی‌شود.)
+
+# توکن بات تلگرام (از @BotFather)
+TELEGRAM_BOT_TOKEN="123456789:AAF...your-bot-token"
+
+# رمز وبهوک — یک رشته‌ی تصادفی طولانی؛ برای تأیید درخواست‌های تلگرام
+WEBHOOK_SECRET="a-very-long-random-string"

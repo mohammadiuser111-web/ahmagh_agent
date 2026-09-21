@@ -1,0 +1,39 @@
+// wrangler.jsonc — پیکربندی استاندارد Cloudflare Workers (فرمت پیشنهادی جدید)
+// مستندات: https://developers.cloudflare.com/workers/wrangler/configuration/
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ahmagh-agent",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-09-01",
+
+  // ⚠️ بعد از اجرای `npx wrangler d1 create ahmagh_agent`
+  // مقدار database_id واقعی را جایگزین REPLACE_WITH_YOUR_DATABASE_ID کنید.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ahmagh_agent",
+      "database_id": "REPLACE_WITH_YOUR_DATABASE_ID",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  // اتصال به Workers AI — برای استخراج ساختار تسک از زبان طبیعی فارسی
+  "ai": {
+    "binding": "AI"
+  },
+
+  // موتور یادآوری — هر ۱۰ دقیقه اجرا می‌شود
+  "triggers": {
+    "crons": ["*/10 * * * *"]
+  },
+
+  "observability": {
+    "enabled": true
+  },
+
+  // متغیرهای عمومی (غیرحساس) — مقادیر حساس فقط از طریق `wrangler secret put`
+  "vars": {
+    "TELEGRAM_BOT_USERNAME": "ahmagh_agent_bot",
+    "AI_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+  }
+}
