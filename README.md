@@ -113,19 +113,21 @@ cd ahmagh_agent
 npm install
 ```
 
-### ۳) ورود به Cloudflare و ساخت دیتابیس D1
+### ۳) دیتابیس D1
+
+این ریپو از قبل روی دیتابیسِ موجود `iman` تنظیم شده (نام و شناسه‌ی واقعی داخل `wrangler.jsonc` هست). اگر دیتابیس دیگری می‌خواهید:
 
 ```bash
 npx wrangler login
 npx wrangler d1 create ahmagh_agent
 ```
 
-شناسه‌ی `database_id` که چاپ می‌شود را در `wrangler.jsonc` جایگزین `REPLACE_WITH_YOUR_DATABASE_ID` کنید.
+و بعد `database_name` و `database_id` را در `wrangler.jsonc` (به‌همراه دستورهای migrate در `package.json` و `deploy.yml`) به‌روز کنید.
 
 ### ۴) مایگریشن
 
 ```bash
-npx wrangler d1 migrations apply ahmagh_agent --remote
+npx wrangler d1 migrations apply iman --remote
 ```
 
 ### ۵) سیکرت‌ها (هرگز commit نمی‌شوند)

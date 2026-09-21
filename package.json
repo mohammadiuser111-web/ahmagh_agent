@@ -10,8 +10,8 @@
     "dry-run": "wrangler deploy --dry-run --outdir=dist",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "db:migrate:local": "wrangler d1 migrations apply ahmagh_agent --local",
-    "db:migrate:remote": "wrangler d1 migrations apply ahmagh_agent --remote",
+    "db:migrate:local": "wrangler d1 migrations apply iman --local",
+    "db:migrate:remote": "wrangler d1 migrations apply iman --remote",
     "tail": "wrangler tail"
   },
   "devDependencies": {
