@@ -1,0 +1,79 @@
+/**
+ * ثبت‌نام و نقش‌ها: admin (با مشخصات ادمین) یا user (عادی)
+ * مشخصات ادمین از سیکرت‌های ورکر می‌آید (ADMIN_USERNAME / ADMIN_PASSWORD).
+ */
+import type { Env } from "./types";
+import { findUserByLogin, getUser, setUserCredentials } from "./db";
+import { sendMessage } from "./telegram";
+
+export async function sha256Hex(s: string): Promise<string> {
+  const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
+  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+export async function cmdRegister(env: Env, msg: any, arg: string): Promise<void> {
+  const parts = arg.trim().split(/\s+/);
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    await sendMessage(
+      env,
+      msg.chat.id,
+      "📝 شکل درست: <code>/register &lt;نام‌کاربری&gt; &lt;رمز‌عبور&gt;</code>\n\n" +
+        "نام کاربری: ۳ تا ۳۲ کاراکتر لاتین/عدد/زیرخط\n" +
+        "با مشخصات ادمین ثبت‌نام کنی → نقشت <b>ادمین</b> می‌شه 👑"
+    );
+    return;
+  }
+  const [username, password] = parts;
+
+  if (!/^[a-zA-Z0-9_]{3,32}$/.test(username)) {
+    await sendMessage(env, msg.chat.id, "❌ نام کاربری باید ۳ تا ۳۲ کاراکتر لاتین، عدد یا _ باشد.");
+    return;
+  }
+  if (password.length < 4) {
+    await sendMessage(env, msg.chat.id, "❌ رمز عبور باید حداقل ۴ کاراکتر باشد.");
+    return;
+  }
+
+  const lower = username.toLowerCase();
+  const existing = await findUserByLogin(env, lower);
+  if (existing && existing.user_id !== msg.from.id) {
+    await sendMessage(env, msg.chat.id, "❌ این نام کاربری قبلاً گرفته شده. یکی دیگه انتخاب کن.");
+    return;
+  }
+
+  const adminUser = (env.ADMIN_USERNAME || "admin").toLowerCase();
+  const adminPass = env.ADMIN_PASSWORD || "";
+  let role = "user";
+  if (lower === adminUser) {
+    if (!adminPass || password !== adminPass) {
+      await sendMessage(env, msg.chat.id, "❌ رمز عبور برای این نام کاربری درست نیست.");
+      return;
+    }
+    role = "admin";
+  }
+
+  const hash = await sha256Hex(password);
+  await setUserCredentials(env, msg.from.id, username, hash, role);
+  await sendMessage(
+    env,
+    msg.chat.id,
+    role === "admin"
+      ? "👑 <b>ثبت‌نام ادمین انجام شد!</b>\nحالا می‌تونی برای خودت و بقیه‌ی کاربرها تسک بسازی."
+      : "👤 ثبت‌نام شدی (<b>کاربر عادی</b>).\nبرای خودت تسک بساز، لیست کن و خروجی بگیر!"
+  );
+}
+
+export async function cmdWhoami(env: Env, msg: any): Promise<void> {
+  const u = await getUser(env, msg.from.id);
+  if (!u) {
+    await sendMessage(env, msg.chat.id, "هنوز ثبت‌نام نکردی! /register <نام‌کاربری> <رمز>");
+    return;
+  }
+  const role = u.role === "admin" ? "👑 ادمین" : "👤 کاربر عادی";
+  const name = u.username_login ? `@${u.username_login}` : "—";
+  await sendMessage(
+    env,
+    msg.chat.id,
+    `🪪 <b>پروفایل من</b>\n\nنام کاربری: <b>${name}</b>\nنقش: <b>${role}</b>\nشناسه تلگرام: <code>${u.user_id}</code>`
+  );
+}

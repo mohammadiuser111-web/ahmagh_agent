@@ -1,12 +1,12 @@
 /**
  * استخراج ساختار تسک از زبان طبیعی فارسی با Workers AI
- * مدل اصلی: @cf/zai-org/glm-5.3-flash (نیازمند پلن پولی)
- * فالبک ۱: مدل جایگزین رایگان — فالبک ۲: پارسر هیوریستیک بدون AI
+ * مدل: llama-3.3-70b (رایگان) — قابل تعویض با متغیر AI_MODEL
+ * فالبک ۱: مدل جایگزین (AI_FALLBACK_MODEL) — فالبک ۲: پارسر هیوریستیک بدون AI
  */
 import type { Env, ParsedTask, TaskStatus } from "./types";
 import { parseRelativeFaDateTime, todayJalaliFa, todayTehranISO } from "./dates";
 
-const DEFAULT_MODEL = "@cf/zai-org/glm-5.3-flash";
+const DEFAULT_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 const DEFAULT_FALLBACK_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 
 /** اسکیمای خروجی (structured outputs — سازگار با JSON Schema) */
@@ -19,13 +19,16 @@ const TASK_JSON_SCHEMA = {
     assignee: { type: "string" },
     start_date: { type: "string" },
     start_time: { type: "string" },
+    start_phrase: { type: "string" },
     due_date: { type: "string" },
     due_time: { type: "string" },
+    due_phrase: { type: "string" },
     status: { type: "string", enum: ["not_started", "in_progress", "done"] },
   },
   required: [
     "intent", "title", "description", "assignee",
-    "start_date", "start_time", "due_date", "due_time", "status",
+    "start_date", "start_time", "start_phrase",
+    "due_date", "due_time", "due_phrase", "status",
   ],
   additionalProperties: false,
 } as const;
@@ -60,6 +63,8 @@ function systemPrompt(today: string, todayJalali: string, knownUsers: string): s
     '- start_date: the date the work BEGINS, only if the message says or implies it (e.g. «فردا باید X بزنم» → tomorrow). If nothing implies a start date, use "" — the bot defaults it to today.',
     '- due_date: the deadline, only if stated or clearly implied (e.g. «تا فردا», «تا ۱۵ مهر», «شنبه تحویل می‌دم»). Do NOT invent or estimate deadlines. If none is given, use "" — the bot will ask the user.',
     '- start_time / due_time: "HH:MM" in 24-hour format if the user mentions a specific clock time for the start or the deadline (ساعت ۱۰:۳۰ عصر → "22:30", ۱۲ ظهر → "12:00", ۸ صبح → "08:00"). Otherwise "".',
+    '- start_phrase / due_phrase: copy the EXACT verbatim substring from the user\'s message that expresses the start date/time and the deadline, keeping Persian words and numbers as written (e.g. «فردا ساعت ۱۰:۳۰ عصر», «تا پس فردا شب», «۵ مهر»). Do NOT translate or convert them. Use "" if the message has no start/deadline phrase. IMPORTANT: if the message contains several dates (e.g. someone else\'s deadline AND the task\'s deadline), pick the phrase belonging to THIS task.',
+
     "Convert Jalali calendar dates (۱۵ مهر ۱۴۰۵) and relative Persian dates (فردا، پس‌فردا، آخر هفته، شنبه، …) to Gregorian ISO using today's date.",
     '- status: "not_started" unless the message implies work already started ("شروع کردم") or is already finished ("انجام دادم", "تمومه").',
     `Known users of this bot (use for assignee matching): ${knownUsers || "(none yet)"}.`,
@@ -224,8 +229,11 @@ function normalize(j: any, originalText: string): ParsedTask {
   const start_time = isTimeStr(str(j?.start_time)) ? str(j?.start_time) : "";
   const due_time = isTimeStr(str(j?.due_time)) ? str(j?.due_time) : "";
   const status: TaskStatus = isTaskStatus(j?.status) ? j.status : "not_started";
+  // عینِ عبارت تاریخ/ساعت از متن کاربر — بعداً با پارسر قطعی محلی تبدیل می‌شود
+  const start_phrase = str(j?.start_phrase).trim().slice(0, 60);
+  const due_phrase = str(j?.due_phrase).trim().slice(0, 60);
   if (!title) return heuristicParse(originalText);
-  return { intent, title, description, assignee_name, start_date, start_time, due_date, due_time, status };
+  return { intent, title, description, assignee_name, start_date, start_time, start_phrase, due_date, due_time, due_phrase, status };
 }
 
 /** فالبک بدون AI: جدا کردن عنوان/توضیحات و تشخیص ساده‌ی تاریخ و ساعت‌های رایج فارسی */
@@ -239,9 +247,12 @@ export function heuristicParse(text: string): ParsedTask {
 
   let due_date = "";
   let due_time: string | null = null;
+  let start_phrase = "";
+  let due_phrase = "";
   const m = t.match(/(?:تا|سررسید)\s+([^،,.\n؛]+)/);
   if (m) {
-    const dt = parseRelativeFaDateTime(m[1], todayTehranISO());
+    due_phrase = m[1].trim();
+    const dt = parseRelativeFaDateTime(due_phrase, todayTehranISO());
     due_date = dt.date;
     due_time = dt.time;
     if (due_date) t = t.replace(m[0], " ").trim(); // تاریخ از توضیحات حذف شود
@@ -260,8 +271,10 @@ export function heuristicParse(text: string): ParsedTask {
     assignee_name: "",
     start_date: "",
     start_time: "",
+    start_phrase,
     due_date,
     due_time: due_time ?? "",
+    due_phrase,
     status: "not_started",
   };
 }

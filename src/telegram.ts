@@ -20,6 +20,35 @@ async function call(env: Env, method: string, payload: Record<string, unknown>):
   }
 }
 
+/** ارسال فایل (سند) به چت — data: بایت‌ها یا رشته */
+export async function sendDocument(
+  env: Env,
+  chatId: number,
+  data: Uint8Array | string,
+  filename: string,
+  mimeType: string,
+  caption = ""
+): Promise<any> {
+  try {
+    const blob = new Blob([data as unknown as ArrayBuffer], { type: mimeType });
+    const fd = new FormData();
+    fd.append("chat_id", String(chatId));
+    if (caption) fd.append("caption", caption);
+    fd.append("document", blob, filename);
+    const res = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendDocument`, {
+      method: "POST",
+      body: fd,
+    });
+    if (!res.ok) {
+      console.error(`[telegram] sendDocument → HTTP ${res.status}: ${await res.text()}`);
+    }
+    return await res.json().catch(() => null);
+  } catch (err) {
+    console.error("[telegram] sendDocument failed:", err);
+    return null;
+  }
+}
+
 export function sendMessage(env: Env, chatId: number, text: string, extra: Record<string, unknown> = {}) {
   return call(env, "sendMessage", {
     chat_id: chatId,

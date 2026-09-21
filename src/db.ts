@@ -24,6 +24,31 @@ export async function upsertUser(
     .run();
 }
 
+/** ثبت/به‌روزرسانی حساب ثبت‌نام (نام کاربری + هش رمز + نقش) */
+export async function setUserCredentials(
+  env: Env,
+  userId: number,
+  usernameLogin: string,
+  passwordHash: string,
+  role: string
+): Promise<void> {
+  await env.DB.prepare(
+    "UPDATE users SET username_login = ?, password_hash = ?, role = ? WHERE user_id = ?"
+  )
+    .bind(usernameLogin, passwordHash, role, userId)
+    .run();
+}
+
+/** جستجوی کاربر با نام کاربریِ ثبت‌نام */
+export async function findUserByLogin(env: Env, usernameLogin: string): Promise<UserRow | null> {
+  const { results } = await env.DB.prepare(
+    "SELECT * FROM users WHERE username_login = ? LIMIT 1"
+  )
+    .bind(usernameLogin)
+    .all<UserRow>();
+  return results?.[0] ?? null;
+}
+
 export async function getUser(env: Env, id: number): Promise<UserRow | null> {
   return (await env.DB.prepare("SELECT * FROM users WHERE user_id = ?").bind(id).first<UserRow>()) ?? null;
 }

@@ -34,9 +34,7 @@
   // متغیرهای عمومی (غیرحساس) — مقادیر حساس فقط از طریق `wrangler secret put`
   "vars": {
     "TELEGRAM_BOT_USERNAME": "ahmagh_agent_bot",
-    // مدل اصلی — GLM-5.3 Flash نیازمند پلن پولی Workers است؛
-    // روی پلن رایگان خودکار به مدل جایگزین (رایگان) برمی‌گردیم
-    "AI_MODEL": "@cf/zai-org/glm-5.3-flash",
-    "AI_FALLBACK_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+    // مدل هوش مصنوعی — llama-3.3-70b (رایگان و بدون محدودیت پلن)
+    "AI_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
   }
 }

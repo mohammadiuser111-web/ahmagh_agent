@@ -15,8 +15,11 @@ export interface Env {
   TELEGRAM_BOT_USERNAME: string;
   /** مدل Workers AI برای استخراج تسک — بدون تغییر کد قابل تعویض است */
   AI_MODEL: string;
-  /** مدل جایگزین اگر مدل اصلی خطا داد (مثلاً به‌خاطر نیاز به پلن پولی) */
-  AI_FALLBACK_MODEL: string;
+  /** مدل جایگزین اگر مدل اصلی خطا داد */
+  AI_FALLBACK_MODEL?: string;
+  /** مشخصات ادمین (سیکرت) — هر که با این‌ها ثبت‌نام کند ادمین است */
+  ADMIN_USERNAME?: string;
+  ADMIN_PASSWORD?: string;
 }
 
 export type TaskStatus = "not_started" | "in_progress" | "done";
@@ -46,6 +49,10 @@ export interface UserRow {
   user_id: number;
   username: string | null;
   first_name: string | null;
+  username_login: string | null;  // نام کاربری ثبت‌نام (اختیاری)
+  password_hash: string | null;   // sha256 رمز ثبت‌نام
+  role: string;                   // 'admin' | 'user'
+
   chat_id: number | null;
   created_at: string;
   updated_at: string;
@@ -77,9 +84,11 @@ export interface ParsedTask {
   description: string;
   /** نام/یوزرنیم مسئول؛ "" یعنی خودِ گوینده */
   assignee_name: string;
-  start_date: string; // "" اگر نگفته باشد
-  start_time: string; // "HH:MM" یا "" اگر ساعت نگفته باشد
-  due_date: string;   // "" اگر نگفته باشد
-  due_time: string;   // "HH:MM" یا "" اگر ساعت نگفته باشد
+  start_date: string;   // "" اگر نگفته باشد
+  start_time: string;   // "HH:MM" یا "" اگر ساعت نگفته باشد
+  start_phrase: string; // عین عبارت تاریخ/ساعت شروع از متن کاربر (اگر AI کپی کرده)
+  due_date: string;     // "" اگر نگفته باشد
+  due_time: string;     // "HH:MM" یا "" اگر ساعت نگفته باشد
+  due_phrase: string;   // عین عبارت تاریخ/ساعت پایان از متن کاربر
   status: TaskStatus;
 }

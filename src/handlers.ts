@@ -20,7 +20,10 @@ import {
   upsertUser,
 } from "./db";
 import { extractDueDateTime, extractTask } from "./ai";
-import { answerCallbackQuery, editMessageText, escapeHtml, sendMessage } from "./telegram";
+import { detectExportRequest, detectListRequest } from "./intent";
+import { cmdRegister, cmdWhoami } from "./auth";
+import { buildHtmlReport, buildPdfReport, buildReportModel, exportKeyboard } from "./exporter";
+import { answerCallbackQuery, editMessageText, escapeHtml, sendDocument, sendMessage } from "./telegram";
 import {
   STATUS_EMOJI,
   STATUS_LABEL,
@@ -51,6 +54,8 @@ const WELCOME = `سلام! من <b>احمق‌ایجنت</b> هستم 🤖
 
 با رسیدن تاریخ شروع، تسک خودکار «در حال انجام» می‌شه و تا تمومش نکنی هم یادآوری می‌کنم 😈
 
+👑 /register &lt;نام‌کاربری&gt; &lt;رمز&gt; — ثبت‌نام (با مشخصات ادمین → ادمین!)
+
 /help — همه‌ی دستورها`;
 
 const HELP = `🤖 <b>راهنمای احمق‌ایجنت</b>
@@ -70,6 +75,9 @@ const HELP = `🤖 <b>راهنمای احمق‌ایجنت</b>
 /assign &lt;شناسه&gt; @یوزرنیم — واگذاری به کس دیگه
 /edit &lt;شناسه&gt; &lt;فیلد&gt;: &lt;مقدار&gt; — ویرایش (عنوان/توضیح/مسئول/شروع/پایان/وضعیت)
 /delete &lt;شناسه&gt; — حذف تسک
+/register &lt;نام‌کاربری&gt; &lt;رمز&gt; — ثبت‌نام 👑 (با مشخصات ادمین → نقش ادمین)
+/whoami — حساب و نقش من
+/export — خروجی گزارشی از تسک‌ها (HTML یا PDF)
 /help — همین راهنما
 
 <b>وضعیت‌ها:</b> not_started / in_progress / done
@@ -81,7 +89,9 @@ const HELP = `🤖 <b>راهنمای احمق‌ایجنت</b>
 • تاریخ پایان اجباریه — اگه تو متن نگی، جدا می‌پرسم و فقط جواب می‌دی (مثلاً: فردا / پنجشنبه / فردا ساعت ۵ عصر)
 • اگه تاریخ شروع نگفی، امروز حساب می‌شه
 • ساعت هم می‌فهمم: «تا فردا ساعت ۱۰:۳۰ عصر» یا «تا شنبه ۱۲ ظهر»
-• با رسیدن زمان شروع، وضعیت خودکار «در حال انجام» می‌شه 🚦`;
+• با رسیدن زمان شروع، وضعیت خودکار «در حال انجام» می‌شه 🚦
+• بدون دستور هم می‌تونی بگی: «احمق تسک‌های منو لیست کن» یا «احمق یه خروجی از تسک‌هام بده»
+• فقط ادمین می‌تونه برای دیگه‌ها تسک بسازه؛ بقیه برای خودشون`;
 
 const HINT = `من فقط وقتی کامل بیدار می‌شم که صدام کنی «احمق» 😅
 
@@ -121,6 +131,16 @@ async function onMessage(env: Env, msg: any): Promise<void> {
     return;
   }
   if (TRIGGER_RE.test(text)) {
+    // نیت‌های غیر از ساخت: لیست / خروجی
+    const listMode = detectListRequest(text);
+    if (listMode) {
+      await sendTaskList(env, msg, listMode === "all" ? "all" : listMode === "done" ? "done" : "");
+      return;
+    }
+    if (detectExportRequest(text)) {
+      await cmdExport(env, msg);
+      return;
+    }
     await createTaskFromText(env, msg, text);
     return;
   }
@@ -171,6 +191,17 @@ async function onCommand(env: Env, msg: any, text: string): Promise<void> {
     case "/edit":
       await cmdEdit(env, msg, arg);
       return;
+    case "/register":
+    case "/signup":
+      await cmdRegister(env, msg, arg);
+      return;
+    case "/whoami":
+      await cmdWhoami(env, msg);
+      return;
+    case "/export":
+    case "/report":
+      await cmdExport(env, msg);
+      return;
     case "/delete":
     case "/del":
       await cmdDelete(env, msg, arg);
@@ -202,46 +233,82 @@ async function createTaskFromText(env: Env, msg: any, text: string): Promise<voi
     return;
   }
 
-  const { user: assignee, note } = await resolveAssignee(env, parsed.assignee_name, msg.from.id);
+  const me = await getUser(env, msg.from.id);
+  const isAdmin = me?.role === "admin";
+  const { user: resolved, note: assignNote } = await resolveAssignee(env, parsed.assignee_name, msg.from.id);
+  let assignee = resolved;
+  let note: string | null = assignNote;
+  if (!isAdmin && resolved.user_id !== msg.from.id) {
+    // ⛓ فقط ادمین می‌تواند برای دیگری تسک بسازد
+    assignee = me ?? resolved;
+    note = [assignNote, "⛓ فقط ادمین می‌تونه برای دیگه‌ها تسک بسازه؛ فعلاً خودت مسئولش شدی."]
+      .filter(Boolean)
+      .join("\n");
+  }
   const today = todayTehranISO();
 
-  // 📅 مدل‌های زبانی در محاسبه‌ی تاریخ‌های فارسی خطا می‌کنند؛
-  // اگر قاعده‌ی دقیق (هیوریستیک) تاریخ را از خودِ متن درآورد، بر تخمین AI مقدم است.
+  // 📅 اولویت تاریخ‌ها (مدل‌های زبانی در محاسبه‌ی تاریخ فارسی خطا می‌کنند):
+  // ۱) عبارتِ عینی که AI از خودِ متن کاربر کپی کرده (start_phrase/due_phrase)
+  //    → با پارسر قطعی محلی تبدیل می‌شود؛ هم معنا درست است هم حساب تاریخ
+  // ۲) regex روی خودِ متن اصلی
+  // ۳) ISO خودِ مدل (آخرین راه)
+  const isoOk = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v || "");
+  const timeOk = (v: string) => /^([01]\d|2[0-3]):[0-5]\d$/.test(v || "");
+
   // ⚠️ مرز کلمه‌ی فارسی: «از» داخل «فاز» یا «تا» داخل «پاستا» نباید حساب شود
   const B = "(?:^|[\\s،,:؛.])";
-  const mFrom = text.match(new RegExp(B + "(?:از|شروع)\\s+((?:\\S+\\s+){0,3}\\S+)"));
-  const mTo = text.match(new RegExp(B + "(?:تا|سررسید)\\s+((?:\\S+\\s+){0,3}\\S+)"));
-  if (mFrom) {
-    const dt = parseRelativeFaDateTime(mFrom[1], today);
-    if (dt.date) {
-      parsed.start_date = dt.date;
-      parsed.start_time = dt.time ?? "";
+  // ۱) بندهای «تا/سررسید» و «از/شروع» از خودِ متن؛ اگر چند بند باشد،
+  //    آخرینِ قابل‌پارس ملاک است (در جمله‌های واقعی، ددلاین خودِ گوینده آخرین «تا» است،
+  //    نه «تا»ی مالِ طرفِ دیگر ماجرا!)
+  const collect = (kw: string) => {
+    let date: string | null = null;
+    let time: string | null = null;
+    for (const m of text.matchAll(new RegExp(B + kw + "\\s+((?:\\S+\\s+){0,3}\\S+)", "g"))) {
+      const dt = parseRelativeFaDateTime(m[1], today);
+      if (dt.date) { date = dt.date; time = dt.time; }
     }
+    return { date, time };
+  };
+  const fromC = collect("(?:از|شروع)");
+  const toC = collect("(?:تا|سررسید)");
+  let sd: string | null = fromC.date;
+  let st: string | null = fromC.time;
+  let dd: string | null = toC.date;
+  let dtm: string | null = toC.time;
+
+  // ۲) عبارتی که AI عیناً از متن کاربر برداشته (برای جمله‌های بدون «تا»)
+  if (!sd && parsed.start_phrase) {
+    const dt = parseRelativeFaDateTime(parsed.start_phrase, today);
+    if (dt.date) sd = dt.date;
+    if (dt.time) st = dt.time;
   }
-  if (mTo) {
-    const dt = parseRelativeFaDateTime(mTo[1], today);
-    if (dt.date) {
-      parsed.due_date = dt.date;
-      parsed.due_time = dt.time ?? "";
-    }
+  if (!dd && parsed.due_phrase) {
+    const dt = parseRelativeFaDateTime(parsed.due_phrase, today);
+    if (dt.date) dd = dt.date;
+    if (dt.time) dtm = dt.time;
   }
 
-  // 🛡 ضدتوهم: اگر متن هیچ نشانه‌ی «شروع» ندارد (بدون «از/شروع») اما AI تاریخ شروعی
-  // مساویِ تاریخ پایان ساخته، همان توهمِ «تا فردا» است → شروع = امروز (پیش‌فرض)
-  const startHint = new RegExp(B + "(?:از|شروع)\\s").test(text);
-  if (!startHint && parsed.start_date && parsed.due_date && parsed.start_date === parsed.due_date) {
-    parsed.start_date = "";
-    parsed.start_time = "";
+  // ۳) ISO خودِ مدل (آخرین راه)
+  if (!sd && isoOk(parsed.start_date)) sd = parsed.start_date;
+  if (sd && !st && timeOk(parsed.start_time)) st = parsed.start_time;
+  if (!dd && isoOk(parsed.due_date)) dd = parsed.due_date;
+  if (dd && !dtm && timeOk(parsed.due_time)) dtm = parsed.due_time;
+
+  // 🛡 ضدتوهم: هیچ نشانه‌ی «شروع» در متن نیست اما شروع = پایانِ آینده؟ توهم است → امروز
+  const startHint = new RegExp(B + "(?:از|شروع)\\s").test(text) || !!parsed.start_phrase;
+  if (!startHint && sd && dd && sd === dd && sd > today) {
+    sd = null;
+    st = null;
   }
 
-  // 🐛 باگ‌فیکس: تاریخ شروع نگفته شده؟ پیش‌فرض = امروز (نه خالی)
-  const start_date = parsed.start_date || today;
+  const start_date = sd || today;
+  const due_date = dd || "";
   // ⏰ ساعت شروع/پایان اگر گفته شده باشد → timestamp کامل با offset تهران
-  const start_at = parsed.start_time ? `${start_date}T${parsed.start_time}:00+03:30` : null;
-  const due_at = parsed.due_date && parsed.due_time ? `${parsed.due_date}T${parsed.due_time}:00+03:30` : null;
+  const start_at = st ? `${start_date}T${st}:00+03:30` : null;
+  const due_at = due_date && dtm ? `${due_date}T${dtm}:00+03:30` : null;
 
   // 📌 تاریخ پایان اجباری است — اگر نگفته، از کاربر بپرس
-  if (!parsed.due_date) {
+  if (!due_date) {
     if (msg.chat?.type === "private") {
       await savePendingTask(env, msg.from.id, msg.chat.id, {
         title: parsed.title,
@@ -278,7 +345,7 @@ async function createTaskFromText(env: Env, msg: any, text: string): Promise<voi
       status: parsed.status,
       start_date,
       start_at,
-      due_date: parsed.due_date,
+      due_date,
       due_at,
     },
     note
@@ -395,6 +462,9 @@ async function tryPendingDeadlineReply(env: Env, msg: any, text: string): Promis
         user_id: draft.assignee_id,
         username: null,
         first_name: null,
+        username_login: null,
+        password_hash: null,
+        role: "user",
         chat_id: null,
         created_at: "",
         updated_at: "",
@@ -635,6 +705,40 @@ async function cmdDelete(env: Env, msg: any, arg: string): Promise<void> {
 
 
 // ============================================================
+// خروجی گزارشی (HTML / PDF)
+// ============================================================
+
+async function cmdExport(env: Env, msg: any): Promise<void> {
+  await sendMessage(
+    env,
+    msg.chat.id,
+    "📤 خروجی رو با چه فرمتی می‌خواهی؟",
+    { reply_markup: exportKeyboard(msg.from.id) }
+  );
+}
+
+async function doExport(env: Env, fromId: number, chatId: number, fmt: string): Promise<void> {
+  try {
+    const user = await getUser(env, fromId);
+    const tasks = await listTasks(env, { involved: fromId });
+    const model = buildReportModel(tasks, user?.first_name || "کاربر");
+    const name = (user?.first_name || "user").replace(/[^a-zA-Z0-9_-]+/g, "_") || "user";
+    if (fmt === "pdf") {
+      const pdf = await buildPdfReport(model);
+      await sendDocument(env, chatId, pdf, `tasks-${name}.pdf`, "application/pdf",
+        `📄 گزارش تسک‌های شما (${faDigits(model.total)} تسک)`);
+    } else {
+      const html = buildHtmlReport(model);
+      await sendDocument(env, chatId, html, `tasks-${name}.html`, "text/html; charset=utf-8",
+        `🌐 گزارش تسک‌های شما (${faDigits(model.total)} تسک) — تو مرورگر باز کن`);
+    }
+  } catch (err) {
+    console.error("[export] failed:", err);
+    await sendMessage(env, chatId, "❌ ساخت خروجی با خطا مواجه شد. دوباره امتحان کن.");
+  }
+}
+
+// ============================================================
 // /edit — ویرایش فیلدهای تسک
 // ============================================================
 
@@ -793,6 +897,18 @@ async function onCallbackQuery(env: Env, cq: any): Promise<void> {
   if (msg.chat?.type === "private") await upsertUser(env, from, msg.chat.id);
 
   const parts = String(cq.data || "").split("|");
+
+  // خروجی گزارشی: ex|<user_id>|<html|pdf>
+  if (parts[0] === "ex" && parts.length === 3) {
+    if (Number(parts[1]) !== from.id) {
+      await answerCallbackQuery(env, cq.id, "این دکمه مال شما نیست 🙂");
+      return;
+    }
+    await answerCallbackQuery(env, cq.id, "⏳ در حال ساخت گزارش...");
+    await doExport(env, from.id, msg.chat.id, parts[2]);
+    return;
+  }
+
   if (parts[0] !== "st" || parts.length !== 3) {
     await answerCallbackQuery(env, cq.id, "دکمه نامعتبره 🤷");
     return;
