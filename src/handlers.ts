@@ -207,8 +207,10 @@ async function createTaskFromText(env: Env, msg: any, text: string): Promise<voi
 
   // 📅 مدل‌های زبانی در محاسبه‌ی تاریخ‌های فارسی خطا می‌کنند؛
   // اگر قاعده‌ی دقیق (هیوریستیک) تاریخ را از خودِ متن درآورد، بر تخمین AI مقدم است.
-  const mFrom = text.match(/(?:از|شروع)\s+((?:\S+\s+){0,3}\S+)/);
-  const mTo = text.match(/(?:تا|سررسید)\s+((?:\S+\s+){0,3}\S+)/);
+  // ⚠️ مرز کلمه‌ی فارسی: «از» داخل «فاز» یا «تا» داخل «پاستا» نباید حساب شود
+  const B = "(?:^|[\\s،,:؛.])";
+  const mFrom = text.match(new RegExp(B + "(?:از|شروع)\\s+((?:\\S+\\s+){0,3}\\S+)"));
+  const mTo = text.match(new RegExp(B + "(?:تا|سررسید)\\s+((?:\\S+\\s+){0,3}\\S+)"));
   if (mFrom) {
     const dt = parseRelativeFaDateTime(mFrom[1], today);
     if (dt.date) {
@@ -222,6 +224,14 @@ async function createTaskFromText(env: Env, msg: any, text: string): Promise<voi
       parsed.due_date = dt.date;
       parsed.due_time = dt.time ?? "";
     }
+  }
+
+  // 🛡 ضدتوهم: اگر متن هیچ نشانه‌ی «شروع» ندارد (بدون «از/شروع») اما AI تاریخ شروعی
+  // مساویِ تاریخ پایان ساخته، همان توهمِ «تا فردا» است → شروع = امروز (پیش‌فرض)
+  const startHint = new RegExp(B + "(?:از|شروع)\\s").test(text);
+  if (!startHint && parsed.start_date && parsed.due_date && parsed.start_date === parsed.due_date) {
+    parsed.start_date = "";
+    parsed.start_time = "";
   }
 
   // 🐛 باگ‌فیکس: تاریخ شروع نگفته شده؟ پیش‌فرض = امروز (نه خالی)
