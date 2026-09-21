@@ -37,11 +37,20 @@ const DATE_JSON_SCHEMA = {
   additionalProperties: false,
 } as const;
 
+const WEEKDAYS_FA = ["یکشنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنجشنبه", "جمعه", "شنبه"];
+
+/** نام روز هفته‌ی یک تاریخ ISO */
+function weekdayFa(iso: string): string {
+  const d = new Date(`${iso}T12:00:00Z`);
+  return WEEKDAYS_FA[d.getUTCDay()] ?? "?";
+}
+
 function systemPrompt(today: string, todayJalali: string, knownUsers: string): string {
   return [
     "You are the task-extraction brain of a Persian (Farsi) Telegram task-manager bot.",
     'Users jokingly address the bot as "احمق" (idiot) — ignore such insults and any meta phrases like "این تسک رو ایجاد کن" / "بساز".',
     `Today is ${today} (Gregorian, Tehran time) = ${todayJalali} in the Jalali (Shamsi) calendar.`,
+    `Today's weekday: ${weekdayFa(today)}. Weekday names: شنبه=Saturday, یکشنبه=Sunday, دوشنبه=Monday, سه‌شنبه=Tuesday, چهارشنبه=Wednesday, پنجشنبه=Thursday, جمعه=Friday. When the user says a weekday, use the NEXT occurrence strictly AFTER today (if today is that weekday, it means one week later).`,
     "Extract the task from the user's message and answer ONLY with JSON matching the schema.",
     "Rules:",
     '- intent: "create_task" only if the user clearly wants a task created; otherwise "other".',
@@ -57,11 +66,8 @@ function systemPrompt(today: string, todayJalali: string, knownUsers: string): s
   ].join("\n");
 }
 
-/** خروجی مدل را به JSON تبدیل می‌کند (تحمل کدفنس و متن اضافه) */
-function parseMaybeJson(result: unknown): any | null {
-  const raw = typeof result === "string" ? result : ((result as { response?: string })?.response ?? "");
-  if (!raw) return null;
-  const cleaned = String(raw)
+function tryParseJson(raw: string): any | null {
+  const cleaned = raw
     .replace(/^```(?:json)?\s*/i, "")
     .replace(/\s*```\s*$/, "")
     .trim();
@@ -70,6 +76,26 @@ function parseMaybeJson(result: unknown): any | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * خروجی مدل را به JSON تبدیل می‌کند. binding ورکرز AI بسته به مدل/حالت،
+ * قالب‌های متفاوتی برمی‌گرداند — همه پشتیبانی می‌شوند:
+ *  1) رشته‌ی خام
+ *  2) { response: "رشته‌ی JSON" }          (رایج‌ترین حالت)
+ *  3) { response: {آبجکت}}                 (structured output خودش پارس شده)
+ *  4) { choices: [{ message: { content } }] } (قالب chat.completion)
+ */
+function parseMaybeJson(result: unknown): any | null {
+  if (!result) return null;
+  if (typeof result === "string") return tryParseJson(result);
+  const r = result as { response?: unknown; choices?: { message?: { content?: unknown } }[] };
+  if (r.response && typeof r.response === "object") return r.response;
+  let raw: unknown = r.response;
+  if (typeof raw !== "string" && Array.isArray(r.choices)) {
+    raw = r.choices[0]?.message?.content;
+  }
+  return typeof raw === "string" && raw ? tryParseJson(raw) : null;
 }
 
 async function callModel(env: Env, model: string, input: unknown): Promise<unknown> {

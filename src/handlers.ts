@@ -204,6 +204,26 @@ async function createTaskFromText(env: Env, msg: any, text: string): Promise<voi
 
   const { user: assignee, note } = await resolveAssignee(env, parsed.assignee_name, msg.from.id);
   const today = todayTehranISO();
+
+  // 📅 مدل‌های زبانی در محاسبه‌ی تاریخ‌های فارسی خطا می‌کنند؛
+  // اگر قاعده‌ی دقیق (هیوریستیک) تاریخ را از خودِ متن درآورد، بر تخمین AI مقدم است.
+  const mFrom = text.match(/(?:از|شروع)\s+((?:\S+\s+){0,3}\S+)/);
+  const mTo = text.match(/(?:تا|سررسید)\s+((?:\S+\s+){0,3}\S+)/);
+  if (mFrom) {
+    const dt = parseRelativeFaDateTime(mFrom[1], today);
+    if (dt.date) {
+      parsed.start_date = dt.date;
+      parsed.start_time = dt.time ?? "";
+    }
+  }
+  if (mTo) {
+    const dt = parseRelativeFaDateTime(mTo[1], today);
+    if (dt.date) {
+      parsed.due_date = dt.date;
+      parsed.due_time = dt.time ?? "";
+    }
+  }
+
   // 🐛 باگ‌فیکس: تاریخ شروع نگفته شده؟ پیش‌فرض = امروز (نه خالی)
   const start_date = parsed.start_date || today;
   // ⏰ ساعت شروع/پایان اگر گفته شده باشد → timestamp کامل با offset تهران
