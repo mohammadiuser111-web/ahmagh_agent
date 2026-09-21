@@ -69,9 +69,10 @@ export interface NewTask {
 }
 
 export async function createTask(env: Env, t: NewTask): Promise<TaskRow | null> {
+  const now = new Date().toISOString();
   const res = await env.DB.prepare(
-    `INSERT INTO tasks (title, description, creator_id, assignee_id, status, start_date, due_date, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO tasks (title, description, creator_id, assignee_id, status, start_date, due_date, created_at, last_reminded_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       t.title,
@@ -81,7 +82,9 @@ export async function createTask(env: Env, t: NewTask): Promise<TaskRow | null> 
       t.status,
       t.start_date,
       t.due_date,
-      new Date().toISOString()
+      now,
+      // اولین یادآوری بعد از یک بازه‌ی کامل بیاید، نه بلافاصله بعد از ساخت
+      now
     )
     .run();
   return getTask(env, res.meta.last_row_id);
@@ -111,14 +114,14 @@ export async function updateTaskStatus(env: Env, id: number, status: TaskStatus)
       .bind(now, now, id)
       .run();
   } else {
-    // برگشت به «شروع‌نشده» → چرخه‌ی یادآوری از نو شروع می‌شود
+    // برگشت به «شروع‌نشده» → چرخه‌ی یادآوری از نو شروع می‌شود (از الان، نه بلافاصله)
     await env.DB.prepare(
       `UPDATE tasks
        SET status = 'not_started', started_at = NULL, completed_at = NULL,
-           last_reminded_at = NULL, reminder_count = 0
+           last_reminded_at = ?, reminder_count = 0
        WHERE id = ?`
     )
-      .bind(id)
+      .bind(new Date().toISOString(), id)
       .run();
   }
   return getTask(env, id);
