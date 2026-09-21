@@ -1,21 +1,24 @@
 /**
  * ahmagh_agent — مدیریت پیام‌ها، دستورها و دکمه‌های تلگرام
  */
-import type { Env, TaskRow, TaskStatus, UserRow } from "./types";
+import type { Env, PendingDraft, TaskRow, TaskStatus, UserRow } from "./types";
 import {
   assignTask,
   createTask,
+  deletePendingTask,
   deleteTaskById,
   findUserByName,
   findUserByUsername,
+  getPendingTask,
   getTask,
   getUser,
   listTasks,
   recentUsers,
+  savePendingTask,
   updateTaskStatus,
   upsertUser,
 } from "./db";
-import { extractTask } from "./ai";
+import { extractDueDate, extractTask } from "./ai";
 import { answerCallbackQuery, editMessageText, escapeHtml, sendMessage } from "./telegram";
 import {
   STATUS_EMOJI,
@@ -26,7 +29,7 @@ import {
   taskCard,
   truncate,
 } from "./format";
-import { enDigits, faDigits, fmtDate } from "./dates";
+import { enDigits, faDigits, fmtDate, parseRelativeFaDate, todayTehranISO } from "./dates";
 
 /** واژه‌ی بیدارکننده‌ی بات 😄 */
 const TRIGGER_RE = /احمق|ahmagh/i;
@@ -40,10 +43,10 @@ const WELCOME = `سلام! من <b>احمق‌ایجنت</b> هستم 🤖
 از حرفت این‌ها رو درمیارم:
 📌 عنوان و توضیحات
 👷 مسئول (اگه اسمش رو بگی)
-📅 تاریخ شروع و پایان (فردا، شنبه، ۱۵ مرداد…)
+📅 تاریخ شروع (اگه نگفی = امروز) و تاریخ پایان (اجباری — اگه نگفی، می‌پرسم!)
 🚦 وضعیت اولیه
 
-بعدش هم تا وقتی تسک رو تموم نکنی، یادآوری می‌کنم 😈
+با رسیدن تاریخ شروع، تسک خودکار «در حال انجام» می‌شه و تا تمومش نکنی هم یادآوری می‌کنم 😈
 
 /help — همه‌ی دستورها`;
 
@@ -68,7 +71,12 @@ const HELP = `🤖 <b>راهنمای احمق‌ایجنت</b>
 <b>وضعیت‌ها:</b> not_started / in_progress / done
 (معادل فارسی هم قبوله: شروع_نشده / در_حال_انجام / تمام)
 
-💡 زیر کارت هر تسک، دکمه‌ی تغییر وضعیت هم هست.`;
+💡 زیر کارت هر تسک، دکمه‌ی تغییر وضعیت هم هست.
+
+<b>نکته‌ها:</b>
+• تاریخ پایان اجباریه — اگه تو متن نگی، جدا می‌پرسم و فقط جواب می‌دی (مثلاً: تا فردا)
+• اگه تاریخ شروع نگفی، امروز حساب می‌شه
+• با رسیدن تاریخ شروع، وضعیت خودکار «در حال انجام» می‌شه 🚦`;
 
 const HINT = `من فقط وقتی کامل بیدار می‌شم که صدام کنی «احمق» 😅
 
@@ -111,7 +119,12 @@ async function onMessage(env: Env, msg: any): Promise<void> {
     await createTaskFromText(env, msg, text);
     return;
   }
-  if (isPrivate) await sendMessage(env, msg.chat.id, HINT);
+  if (isPrivate) {
+    // شاید این پیام، جوابِ سؤالِ «تاریخ پایان» یک تسک در انتظار است
+    const handled = await tryPendingDeadlineReply(env, msg, text);
+    if (handled) return;
+    await sendMessage(env, msg.chat.id, HINT);
+  }
 }
 
 async function onCommand(env: Env, msg: any, text: string): Promise<void> {
@@ -182,31 +195,161 @@ async function createTaskFromText(env: Env, msg: any, text: string): Promise<voi
   }
 
   const { user: assignee, note } = await resolveAssignee(env, parsed.assignee_name, msg.from.id);
-  // تازه INSERT شده؛ نال نیست
-  const task = (await createTask(env, {
-    title: parsed.title,
-    description: parsed.description,
-    creator_id: msg.from.id,
-    assignee_id: assignee.user_id,
-    status: parsed.status,
-    start_date: parsed.start_date || null,
-    due_date: parsed.due_date || null,
-  }))!;
-  const creator = await getUser(env, msg.from.id);
+  const today = todayTehranISO();
+  // 🐛 باگ‌فیکس: تاریخ شروع نگفته شده؟ پیش‌فرض = امروز (نه خالی)
+  const start_date = parsed.start_date || today;
 
-  await sendMessage(env, chatId, `✅ <b>تسک ساخته شد!</b>\n\n${taskCard(task, creator, assignee, note)}`, {
-    reply_markup: statusKeyboard(task),
-  });
-
-  // اگر مسئول کس دیگه‌ای است، به خودش هم خبر بده
-  if (assignee.user_id !== msg.from.id && assignee.chat_id) {
+  // 📌 تاریخ پایان اجباری است — اگر نگفته، از کاربر بپرس
+  if (!parsed.due_date) {
+    if (msg.chat?.type === "private") {
+      await savePendingTask(env, msg.from.id, msg.chat.id, {
+        title: parsed.title,
+        description: parsed.description,
+        creator_id: msg.from.id,
+        assignee_id: assignee.user_id,
+        status: parsed.status,
+        start_date,
+      });
+      await sendMessage(
+        env,
+        chatId,
+        `📝 تسک «${escapeHtml(truncate(parsed.title, 60))}» رو یادداشت کردم؛ فقط <b>تاریخ پایان</b> رو نگفتی!\n\n⏳ تا کی باید تموم بشه؟\n(مثلاً: تا فردا / تا پنجشنبه / تا ۱۵ مهر — یا برای لغو: بی‌خیال)`
+      );
+      return;
+    }
     await sendMessage(
       env,
-      assignee.chat_id,
-      `👷 ${displayName(creator)} یه تسک برایت ساخت:\n\n${taskCard(task, creator, assignee)}`,
+      chatId,
+      `⏳ تاریخ پایان رو نگفتی! دوباره همراه با تاریخ بفرست، مثلاً:\n«احمق این تسک رو ایجاد کن: ${escapeHtml(truncate(parsed.title, 40))}، تا فردا»`
+    );
+    return;
+  }
+
+  await createAndAnnounceTask(
+    env,
+    msg,
+    {
+      title: parsed.title,
+      description: parsed.description,
+      creator_id: msg.from.id,
+      assignee,
+      status: parsed.status,
+      start_date,
+      due_date: parsed.due_date,
+    },
+    note
+  );
+}
+
+/** ساخت نهایی تسک + ارسال کارت به سازنده و مسئول */
+async function createAndAnnounceTask(
+  env: Env,
+  msg: any,
+  fields: {
+    title: string;
+    description: string;
+    creator_id: number;
+    assignee: UserRow;
+    status: TaskStatus;
+    start_date: string | null;
+    due_date: string;
+  },
+  note?: string | null
+): Promise<void> {
+  const task = (await createTask(env, {
+    title: fields.title,
+    description: fields.description,
+    creator_id: fields.creator_id,
+    assignee_id: fields.assignee.user_id,
+    status: fields.status,
+    start_date: fields.start_date,
+    due_date: fields.due_date,
+  }))!;
+  const creator = await getUser(env, fields.creator_id);
+  const today = todayTehranISO();
+
+  const notes: string[] = [];
+  if (note) notes.push(note);
+  if (fields.start_date && fields.start_date > today) {
+    notes.push(`از ${fmtDate(fields.start_date)} به‌صورت خودکار «در حال انجام» می‌شه 🚦`);
+  }
+
+  await sendMessage(
+    env,
+    msg.chat.id,
+    `✅ <b>تسک ساخته شد!</b>\n\n${taskCard(task, creator, fields.assignee, notes.join("\n") || null)}`,
+    { reply_markup: statusKeyboard(task) }
+  );
+
+  // اگر مسئول کس دیگه‌ای است، به خودش هم خبر بده
+  if (fields.assignee.user_id !== msg.from.id && fields.assignee.chat_id) {
+    await sendMessage(
+      env,
+      fields.assignee.chat_id,
+      `👷 ${displayName(creator)} یه تسک برایت ساخت:\n\n${taskCard(task, creator, fields.assignee)}`,
       { reply_markup: statusKeyboard(task) }
     );
   }
+}
+
+const PENDING_TTL_MS = 6 * 3_600_000; // جوابِ «تاریخ پایان» تا ۶ ساعت اعتبار دارد
+const CANCEL_RE = /^(بی\s*خیال|بی\s*خیالش|لغو|کنسل|cancel|نه)\s*[!.؟]*$/i;
+
+/**
+ * اگر تسکی در انتظارِ تاریخ پایان باشد، این پیامِ خصوصی جوابِ همان سؤال است.
+ */
+async function tryPendingDeadlineReply(env: Env, msg: any, text: string): Promise<boolean> {
+  const pending = await getPendingTask(env, msg.from.id);
+  if (!pending) return false;
+
+  if (Date.now() - Date.parse(pending.created_at) > PENDING_TTL_MS) {
+    await deletePendingTask(env, msg.from.id);
+    return false;
+  }
+
+  const clean = text.replace(/\u200c/g, " ").trim();
+  if (CANCEL_RE.test(clean)) {
+    await deletePendingTask(env, msg.from.id);
+    await sendMessage(env, msg.chat.id, "🗑 باشه، بی‌خیالش. هر وقت خواستی دوباره بساز!");
+    return true;
+  }
+
+  // اول تاریخ را سریع و بدون AI دربیار؛ اگر نشد با AI
+  let due = parseRelativeFaDate(clean, todayTehranISO());
+  if (!due) {
+    const aiDue = await extractDueDate(env, clean);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(aiDue)) due = aiDue;
+  }
+  if (!due) {
+    await sendMessage(
+      env,
+      msg.chat.id,
+      "🤔 تاریخ رو نفهمیدم! ساده‌تر بگو — مثلاً: «تا فردا»، «پنجشنبه» یا «۱۵ مهر».\n(لغو: بی‌خیال)"
+    );
+    return true;
+  }
+
+  await deletePendingTask(env, msg.from.id);
+  const draft = JSON.parse(pending.draft) as PendingDraft;
+  const assignee = await getUser(env, draft.assignee_id);
+  await createAndAnnounceTask(env, msg, {
+    title: draft.title,
+    description: draft.description,
+    creator_id: draft.creator_id,
+    assignee:
+      assignee ?? {
+        user_id: draft.assignee_id,
+        username: null,
+        first_name: null,
+        chat_id: null,
+        created_at: "",
+        updated_at: "",
+      },
+    status: draft.status,
+    start_date: draft.start_date,
+    due_date: due,
+  });
+  return true;
 }
 
 /** تبدیل نام مسئول (از متن کاربر) به کاربر واقعی ثبت‌شده */

@@ -46,6 +46,24 @@ export interface UserRow {
   updated_at: string;
 }
 
+/** پیش‌نویس تسک در انتظار دریافت تاریخ پایان از کاربر */
+export interface PendingDraft {
+  title: string;
+  description: string;
+  creator_id: number;
+  assignee_id: number;
+  status: TaskStatus;
+  start_date: string | null;
+}
+
+/** ردیف جدول pending_tasks */
+export interface PendingTaskRow {
+  user_id: number;
+  chat_id: number;
+  draft: string; // JSON از PendingDraft
+  created_at: string;
+}
+
 /** خروجی استخراج هوشمند تسک از متن کاربر */
 export interface ParsedTask {
   intent: "create_task" | "other";

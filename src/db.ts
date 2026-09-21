@@ -1,7 +1,7 @@
 /**
  * لایه‌ی دیتابیس — همه‌ی کوئری‌های D1
  */
-import type { Env, TaskRow, TaskStatus, UserRow } from "./types";
+import type { Env, PendingDraft, PendingTaskRow, TaskRow, TaskStatus, UserRow } from "./types";
 
 /** ثبت/به‌روزرسانی کاربر (هر بار که حرف بزند) */
 export async function upsertUser(
@@ -173,4 +173,45 @@ export async function listTasks(env: Env, o: ListTasksOptions): Promise<TaskRow[
     .bind(...params)
     .all<TaskRow>();
   return res.results ?? [];
+}
+
+// ============================================================
+// تسک‌های در انتظار تاریخ پایان
+// (وقتی کاربر تاریخ پایان نمی‌دهد، پیش‌نویس می‌ماند تا جواب بدهد)
+// ============================================================
+
+export async function savePendingTask(env: Env, userId: number, chatId: number, draft: PendingDraft): Promise<void> {
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `INSERT INTO pending_tasks (user_id, chat_id, draft, created_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(user_id) DO UPDATE SET
+       chat_id = excluded.chat_id, draft = excluded.draft, created_at = excluded.created_at`
+  )
+    .bind(userId, chatId, JSON.stringify(draft), now)
+    .run();
+}
+
+export async function getPendingTask(env: Env, userId: number): Promise<PendingTaskRow | null> {
+  return (await env.DB.prepare("SELECT * FROM pending_tasks WHERE user_id = ?").bind(userId).first<PendingTaskRow>()) ?? null;
+}
+
+export async function deletePendingTask(env: Env, userId: number): Promise<void> {
+  await env.DB.prepare("DELETE FROM pending_tasks WHERE user_id = ?").bind(userId).run();
+}
+
+/** پاک‌سازی پیش‌نویس‌های بی‌جواب (از داخل کرون) */
+export async function cleanupPendingTasks(env: Env, olderThanHours = 6): Promise<void> {
+  const cutoff = new Date(Date.now() - olderThanHours * 3_600_000).toISOString();
+  await env.DB.prepare("DELETE FROM pending_tasks WHERE created_at < ?").bind(cutoff).run();
+}
+
+/** تسک‌های «شروع‌نشده» که تاریخ شروعشان رسیده → باید خودکار «در حال انجام» شوند */
+export async function tasksToAutoStart(env: Env, todayISO: string): Promise<TaskRow[]> {
+  const { results } = await env.DB.prepare(
+    "SELECT * FROM tasks WHERE status = 'not_started' AND start_date IS NOT NULL AND start_date <= ? LIMIT 100"
+  )
+    .bind(todayISO)
+    .all<TaskRow>();
+  return results ?? [];
 }

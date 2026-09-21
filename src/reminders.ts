@@ -3,10 +3,10 @@
  * و برای تسک‌های باز، متناسب با فاصله تا سررسید به «مسئول» پیام می‌دهد.
  */
 import type { Env, TaskRow, UserRow } from "./types";
-import { getUser } from "./db";
+import { getUser, tasksToAutoStart } from "./db";
 import { escapeHtml, sendMessage } from "./telegram";
 import { displayName, truncate } from "./format";
-import { endOfDayTehran, faDigits, fmtDate, humanizeHoursLeft, startOfDayTehran } from "./dates";
+import { endOfDayTehran, faDigits, fmtDate, humanizeHoursLeft, startOfDayTehran, todayTehranISO } from "./dates";
 
 /** بازه‌های یادآوری بر حسب ساعت */
 export const REMINDER_INTERVALS_HOURS = {
@@ -121,4 +121,39 @@ function reminderText(task: TaskRow, assignee: UserRow | null): string {
     `✅ تمومش کردی؟ /done ${id}`,
     `🔍 جزئیات: /task ${id}`,
   ].join("\n");
+}
+
+/**
+ * شروع خودکار: با رسیدن «تاریخ شروع»، وضعیت تسک به «در حال انجام» می‌رود
+ * و به مسئولش پیام می‌رود.
+ */
+export async function runAutoStart(env: Env): Promise<void> {
+  const today = todayTehranISO();
+  const tasks = await tasksToAutoStart(env, today);
+  if (!tasks.length) return;
+  for (const task of tasks) {
+    try {
+      await env.DB.prepare(
+        "UPDATE tasks SET status = 'in_progress', started_at = COALESCE(started_at, ?) WHERE id = ?"
+      )
+        .bind(new Date().toISOString(), task.id)
+        .run();
+
+      const assignee = await getUser(env, task.assignee_id);
+      const creator = await getUser(env, task.creator_id);
+      const target = assignee?.chat_id ?? creator?.chat_id;
+      if (target) {
+        await sendMessage(
+          env,
+          target,
+          `🚦 وقتش رسید! تسک «${escapeHtml(truncate(task.title, 80))}» از امروز <b>در حال انجام</b> است — بزن بریم 💪` +
+            `\n\n✅ تمومش کردی؟ /done ${task.id}` +
+            `\n🔍 جزئیات: /task ${task.id}`
+        );
+      }
+    } catch (err) {
+      console.error(`[auto-start] task ${task.id} failed:`, err);
+    }
+  }
+  console.log(`[auto-start] ${tasks.length} task(s) → in_progress`);
 }

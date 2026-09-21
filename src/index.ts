@@ -10,7 +10,8 @@
  */
 import type { Env } from "./types";
 import { handleUpdate } from "./handlers";
-import { runReminders } from "./reminders";
+import { cleanupPendingTasks } from "./db";
+import { runAutoStart, runReminders } from "./reminders";
 import { setWebhook } from "./telegram";
 
 export default {
@@ -53,7 +54,13 @@ export default {
   },
 
   async scheduled(_event, env, ctx) {
-    ctx.waitUntil(runReminders(env));
+    ctx.waitUntil(
+      (async () => {
+        await runReminders(env); // موتور یادآوری
+        await runAutoStart(env); // شروع خودکار تسک‌هایی که تاریخ شروعشان رسیده
+        await cleanupPendingTasks(env); // پاک‌سازی پیش‌نویس‌های بی‌جواب
+      })()
+    );
   },
 } satisfies ExportedHandler<Env>;
 

@@ -3,7 +3,7 @@
  * (+ فالبک هیوریستیک اگر AI در دسترس نبود یا خطا داد)
  */
 import type { Env, ParsedTask, TaskStatus } from "./types";
-import { addDaysISO, todayTehranISO } from "./dates";
+import { addDaysISO, parseRelativeFaDate, todayJalaliFa, todayTehranISO } from "./dates";
 
 const DEFAULT_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 
@@ -23,46 +23,96 @@ const TASK_JSON_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-function systemPrompt(today: string, knownUsers: string): string {
+const DATE_JSON_SCHEMA = {
+  type: "object",
+  properties: { date: { type: "string" } },
+  required: ["date"],
+  additionalProperties: false,
+} as const;
+
+function systemPrompt(today: string, todayJalali: string, knownUsers: string): string {
   return [
     "You are the task-extraction brain of a Persian (Farsi) Telegram task-manager bot.",
     'Users jokingly address the bot as "احمق" (idiot) — ignore such insults and any meta phrases like "این تسک رو ایجاد کن" / "بساز".',
-    `Today's date (Gregorian, Tehran time) is ${today}.`,
+    `Today is ${today} (Gregorian, Tehran time) = ${todayJalali} in the Jalali (Shamsi) calendar.`,
     "Extract the task from the user's message and answer ONLY with JSON matching the schema.",
     "Rules:",
     '- intent: "create_task" only if the user clearly wants a task created; otherwise "other".',
     "- title: short imperative task title (max ~90 characters), written in the SAME language as the task text (usually Persian). Never include insults or meta phrases in it.",
     '- description: remaining details, or "" if none.',
     '- assignee: who must do the task — a username (without @) or a first name exactly as written. If it refers to the speaker (من/خودم) or nobody else is mentioned, use "".',
-    '- start_date / due_date: Gregorian ISO "YYYY-MM-DD" or "". Resolve relative Persian dates (فردا، پس‌فردا، امشب، آخر هفته، شنبه، ۱۵ مرداد، …) using today\'s date. due_date is the deadline (تاریخ پایان). If only a deadline is given, leave start_date empty.',
+    '- start_date: the date the work BEGINS, only if the message says or implies it (e.g. «فردا باید X بزنم» → tomorrow). If nothing implies a start date, use "" — the bot will default it to today.',
+    '- due_date: the deadline, only if stated or clearly implied (e.g. «تا فردا», «تا ۱۵ مهر», «شنبه تحویل می‌دم»). Do NOT invent or estimate deadlines. If none is given, use "" — the bot will ask the user.',
+    "Convert Jalali calendar dates (۱۵ مهر ۱۴۰۵) and relative Persian dates (فردا، پس‌فردا، آخر هفته، شنبه، …) to Gregorian ISO using today's date.",
     '- status: "not_started" unless the message implies work already started ("شروع کردم") or is already finished ("انجام دادم", "تمومه").',
     `Known users of this bot (use for assignee matching): ${knownUsers || "(none yet)"}.`,
   ].join("\n");
 }
 
-export async function extractTask(env: Env, text: string, knownUsers = ""): Promise<ParsedTask> {
+/** اجرای مدل با structured output — خروجی آبجکت JSON پارس‌شده */
+async function runJson(env: Env, messages: { role: string; content: string }[], schema: unknown, schemaName: string, maxTokens: number): Promise<any | null> {
   const model = env.AI_MODEL || DEFAULT_MODEL;
+  const run = env.AI.run as unknown as (m: string, i: unknown) => Promise<unknown>;
+  const result = (await run(model, {
+    messages,
+    response_format: { type: "json_schema", json_schema: { name: schemaName, schema, strict: true } },
+    max_tokens: maxTokens,
+  })) as { response?: string } | string | null;
+  const raw = typeof result === "string" ? result : (result?.response ?? "");
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+/** استخراج کامل ساختار تسک از پیام کاربر */
+export async function extractTask(env: Env, text: string, knownUsers = ""): Promise<ParsedTask> {
   const userText = text.slice(0, 2000);
   try {
-    const run = env.AI.run as unknown as (m: string, i: unknown) => Promise<unknown>;
-    const result = (await run(model, {
-      messages: [
-        { role: "system", content: systemPrompt(todayTehranISO(), knownUsers) },
+    const parsed = await runJson(
+      env,
+      [
+        { role: "system", content: systemPrompt(todayTehranISO(), todayJalaliFa(), knownUsers) },
         { role: "user", content: userText },
       ],
-      response_format: {
-        type: "json_schema",
-        json_schema: { name: "extracted_task", schema: TASK_JSON_SCHEMA, strict: true },
-      },
-      max_tokens: 600,
-    })) as { response?: string } | string | null;
-
-    const raw = typeof result === "string" ? result : (result?.response ?? "");
-    const parsed = JSON.parse(raw);
-    return normalize(parsed, userText);
+      TASK_JSON_SCHEMA,
+      "extracted_task",
+      600
+    );
+    if (parsed) return normalize(parsed, userText);
+    console.error("[ai] empty/invalid JSON → heuristic fallback");
   } catch (err) {
     console.error("[ai] extraction failed → heuristic fallback:", err);
-    return heuristicParse(userText);
+  }
+  return heuristicParse(userText);
+}
+
+/** استخراج فقط تاریخ پایان از جواب کوتاه کاربر (مثل «تا پنجشنبه») */
+export async function extractDueDate(env: Env, text: string): Promise<string> {
+  try {
+    const parsed = await runJson(
+      env,
+      [
+        {
+          role: "system",
+          content: [
+            `The user is answering the question "تا کی باید این تسک تموم بشه؟" (until when is this task due?) in Persian.`,
+            `Today is ${todayTehranISO()} (Gregorian, Tehran) = ${todayJalaliFa()} Jalali.`,
+            'Convert their answer to a Gregorian ISO date "YYYY-MM-DD". If you cannot determine any date, reply {"date": ""}.',
+          ].join(" "),
+        },
+        { role: "user", content: text.slice(0, 300) },
+      ],
+      DATE_JSON_SCHEMA,
+      "due_date",
+      100
+    );
+    const d = String(parsed?.date ?? "");
+    return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : "";
+  } catch (err) {
+    console.error("[ai] extractDueDate failed:", err);
+    return "";
   }
 }
 
@@ -88,7 +138,7 @@ function normalize(j: any, originalText: string): ParsedTask {
   return { intent, title, description, assignee_name, start_date, due_date, status };
 }
 
-/** فالبک بدون AI: جدا کردن عنوان/توضیحات و تشخیص ساده‌ی «تا فردا» و مشابه آن */
+/** فالبک بدون AI: جدا کردن عنوان/توضیحات و تشخیص ساده‌ی تاریخ‌های رایج فارسی */
 export function heuristicParse(text: string): ParsedTask {
   let t = text.replace(/احمق/g, " ");
   t = t.replace(
@@ -98,15 +148,10 @@ export function heuristicParse(text: string): ParsedTask {
   t = t.replace(/^[\s:：،,–-]+/, "").trim();
 
   let due_date = "";
-  const m = t.match(/تا\s+(فردا|پس\s*فردا|پسفردا|امشب|هفته\s*آینده|آینده)/);
+  const m = t.match(/(?:تا|سررسید)\s+([^،,.\n؛]+)/);
   if (m) {
-    const w = m[1];
-    if (w.includes("پس")) due_date = addDaysISO(todayTehranISO(), 2);
-    else if (w === "فردا") due_date = addDaysISO(todayTehranISO(), 1);
-    else if (w === "امشب") due_date = todayTehranISO();
-    else due_date = addDaysISO(todayTehranISO(), 7);
-    // عبارت تاریخ را از متن حذف کن تا داخل توضیحات نیاید
-    t = t.replace(m[0], " ").trim();
+    due_date = parseRelativeFaDate(m[1], todayTehranISO());
+    if (due_date) t = t.replace(m[0], " ").trim(); // تاریخ از توضیحات حذف شود
   }
 
   const firstClause = t.split(/[.\n،؛!؟]/)[0].trim();
@@ -120,7 +165,7 @@ export function heuristicParse(text: string): ParsedTask {
     title,
     description,
     assignee_name: "",
-    start_date: "",
+    start_date: "", // کد فراخوان‌کننده به‌صورت پیش‌فرض «امروز» می‌گذارد
     due_date,
     status: "not_started",
   };
