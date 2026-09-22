@@ -52,7 +52,8 @@ describe("گزارش HTML — تک‌فایل با سه تب", () => {
     }
     // و محتوای هر سه شکل در همان فایل
     expect(html).toContain("<table"); // لیستی
-    expect(html).toContain("جمع‌بندی"); // گزارش‌طور
+    expect(html).toContain('class="summary"'); // گزارش‌طور (جمع‌بندی)
+    expect(html).toContain("در حال انجام");
     expect(html).toContain("<svg"); // داشبورد
     expect(html).toContain("لندینگ پیج رو درست کن");
     expect(html).toContain("خرید نان");
@@ -60,9 +61,11 @@ describe("گزارش HTML — تک‌فایل با سه تب", () => {
   });
   it("تبِ پیش‌فرض از پارامتر style می‌آید", () => {
     const m = buildReportModel(tasks, "Iman");
-    expect(buildHtmlReport(m, "dash")).toContain('id="t-dash" checked');
-    expect(buildHtmlReport(m, "report")).toContain('id="t-report" checked');
-    expect(buildHtmlReport(m, "list")).toContain('id="t-list" checked');
+    expect(buildHtmlReport(m, "dash")).toMatch(/id="t-dash"[^>]*checked/);
+    expect(buildHtmlReport(m, "report")).toMatch(/id="t-report"[^>]*checked/);
+    expect(buildHtmlReport(m, "list")).toMatch(/id="t-list"[^>]*checked/);
+    // فقط یکی checked است
+    expect(buildHtmlReport(m, "dash").match(/ checked/g)!.length).toBe(1);
   });
   it("فونت Vazirmatn embed شده (data:font، بدون CDN)", () => {
     const html = buildHtmlReport(buildReportModel(tasks, "Iman"), "list");
@@ -70,6 +73,30 @@ describe("گزارش HTML — تک‌فایل با سه تب", () => {
     expect(html).toContain("data:font/woff2;base64,");
     expect(html).not.toContain("http://"); // هیچ منبع خارجی
     expect(html).not.toContain("https://"); // هیچ منبع خارجی
+  });
+  it("تم روشن/تیره: کلید CSS-only + پیش‌فرض از سیستم + چاپ همیشه روشن", () => {
+    const html = buildHtmlReport(buildReportModel(tasks, "Iman"), "list");
+    expect(html).toContain('id="tg"'); // checkbox تم
+    expect(html).toContain('for="tg"'); // دکمه‌ی کلید
+    expect(html).toContain("prefers-color-scheme: dark"); // پیش‌فرض از سیستم
+    expect(html).toContain("color-scheme:dark"); // توکن‌های تم تیره
+    expect(html.match(/#tg:checked ~ \.wrap/g)!.length).toBeGreaterThanOrEqual(2); // معکوس‌کردن تم در هر دو حالت سیستم
+    // در چاپ تم روشن اعمال می‌شود (بلاک print بعد از قواعد تم)
+    expect(html.indexOf("@media print")).toBeGreaterThan(html.indexOf("#tg:checked ~ .wrap{"));
+  });
+  it("آیکون SVG به جای ایموجی + انیمیشن‌ها", () => {
+    const html = buildHtmlReport(buildReportModel(tasks, "Iman"), "list");
+    // آیکون‌های خطی SVG با currentColor
+    expect((html.match(/<svg class="ic/g) ?? []).length).toBeGreaterThan(15);
+    expect(html).toContain('stroke="currentColor"');
+    // هیچ ایموجی در خروجی نباشد
+    expect(html).not.toMatch(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}]/u);
+    // انیمیشن‌ها + احترام به reduced-motion
+    expect(html).toContain("@keyframes rise");
+    expect(html).toContain("@keyframes grow");
+    expect(html).toContain("prefers-reduced-motion");
+    // افکت stagger با متغیر --i
+    expect(html).toContain("--i:");
   });
   it("STYLE_LABEL برای دکمه‌ها موجود است", () => {
     expect(STYLE_LABEL.list).toContain("لیستی");

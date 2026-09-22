@@ -97,7 +97,7 @@ const HELP = `🤖 <b>راهنمای احمق‌ایجنت</b>
 
 🎛 <b>منو</b>
 🗂 مدیریت تسک — ساخت · ویرایش · حذف · تسک‌های من
-📊 گزارش — خروجی HTML در سه تب: لیستی، گزارش، داشبورد
+📊 گزارش — خروجی HTML تک‌فایل: سه تب (لیستی · گزارش · داشبورد) + تم روشن/تیره
 🚪 خروج — ثبت‌نامت می‌ماند؛ با «ورود» برمی‌گردی
 👑 ادمین: 👥 کاربرها · 🌐 تسک‌های همه · 🗑 حذف کاربر
 
@@ -1493,7 +1493,7 @@ async function doExport(env: Env, fromId: number, chatId: number, scope: string,
       html,
       `tasks-${name}.html`,
       "text/html; charset=utf-8",
-      `📊 گزارش ${scopeName} (${faDigits(model.total)} تسک) — سه تب: لیستی · گزارش · داشبورد | تبِ اول: ${STYLE_LABEL[st]}`
+      `📊 گزارش ${scopeName} (${faDigits(model.total)} تسک) — یک فایل، سه تب (لیستی · گزارش · داشبورد) با تم روشن/تیره | شروع از: ${STYLE_LABEL[st]}`
     );
   } catch (err) {
     console.error("[export] failed:", err);
