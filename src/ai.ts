@@ -6,7 +6,7 @@
 import type { Env, ParsedTask, TaskStatus } from "./types";
 import { addDaysISO, enDigits, parseRelativeFaDateTime, todayJalaliFa, todayTehranISO } from "./dates";
 
-const DEFAULT_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+const DEFAULT_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct";
 const DEFAULT_FALLBACK_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 
 /** اسکیمای خروجی (structured outputs — سازگار با JSON Schema) */
