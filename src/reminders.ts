@@ -7,6 +7,7 @@ import { getUser, tasksToAutoStart } from "./db";
 import { escapeHtml, sendMessage } from "./telegram";
 import { displayName, truncate } from "./format";
 import { endOfDayTehran, faDigits, fmtDate, humanizeHoursLeft, startOfDayTehran, todayTehranISO } from "./dates";
+import { reminderSpecText } from "./dates";
 
 /** بازه‌های یادآوری بر حسب ساعت */
 export const REMINDER_INTERVALS_HOURS = {
@@ -44,6 +45,70 @@ export function reminderIntervalHours(
   return REMINDER_INTERVALS_HOURS.normal;
 }
 
+/**
+ * لحظه‌ی موعدِ یادآوری برای یک تسک با الگوی داینامیک — یا null اگر هنوز وقتش نرسیده.
+ */
+function dynamicDue(
+  task: TaskRow,
+  now: number
+): { fire: boolean; once: boolean; text: string | null } {
+  const lastMs = task.last_reminded_at ? Date.parse(task.last_reminded_at) : 0;
+  switch (task.reminder_type) {
+    case "none":
+      return { fire: false, once: false, text: null };
+
+    case "daily": {
+      if (!task.reminder_time) return { fire: false, once: false, text: null };
+      // روزِ شروع نرسیده؟ هنوز اذیت نکن
+      if (task.start_at && now < Date.parse(task.start_at)) return { fire: false, once: false, text: null };
+      if (task.start_date && now < startOfDayTehran(task.start_date)) return { fire: false, once: false, text: null };
+      const [h, m] = task.reminder_time.split(":").map(Number);
+      // ساعتِ امروزِ تهران رسیده؟ و امروز هنوز نفرستاده‌ایم؟
+      const nowTeh = new Date(now + 3.5 * 3_600_000);
+      const todayMin = nowTeh.getUTCHours() * 60 + nowTeh.getUTCMinutes();
+      if (todayMin < h * 60 + m) return { fire: false, once: false, text: null };
+      const lastDayTeh = new Date(lastMs + 3.5 * 3_600_000).toISOString().slice(0, 10);
+      const todayISO = new Date(now + 3.5 * 3_600_000).toISOString().slice(0, 10);
+      if (lastMs && lastDayTeh === todayISO) return { fire: false, once: false, text: null };
+      return { fire: true, once: false, text: `🔔 <b>یادآوری روزانه</b> (ساعت ${faDigits(task.reminder_time)})` };
+    }
+
+    case "every_hours": {
+      const n = task.reminder_interval_hours ?? 0;
+      if (n < 1) return { fire: false, once: false, text: null };
+      if (task.start_at && now < Date.parse(task.start_at)) return { fire: false, once: false, text: null };
+      if (task.start_date && now < startOfDayTehran(task.start_date)) return { fire: false, once: false, text: null };
+      // اولین یادآوری یک بازه‌ی کامل بعد از ساخت؛ بعدش هر N ساعت از آخرین پیام
+      const base = lastMs || (task.created_at ? Date.parse(task.created_at) : 0);
+      if (now - base < n * 3_600_000) return { fire: false, once: false, text: null };
+      return { fire: true, once: false, text: `🔔 یادآوری هر ${faDigits(n)} ساعت` };
+    }
+
+    case "before_deadline": {
+      const lead = (task.reminder_lead_minutes ?? 0) * 60_000;
+      if (!lead) return { fire: false, once: false, text: null };
+      const dueAt = task.due_at ? Date.parse(task.due_at) : task.due_date ? endOfDayTehran(task.due_date) : 0;
+      if (!dueAt || now < dueAt - lead || now > dueAt + 6 * 3_600_000) return { fire: false, once: false, text: null };
+      if (task.reminder_done) return { fire: false, once: false, text: null };
+      const leftH = (dueAt - now) / 3_600_000;
+      return {
+        fire: true,
+        once: true,
+        text: `⏰ <b>ددلاین نزدیکه!</b> فقط ${humanizeHoursLeft(Math.max(leftH, 0.01))} مونده`,
+      };
+    }
+
+    case "once": {
+      if (!task.reminder_at || task.reminder_done) return { fire: false, once: false, text: null };
+      if (now < Date.parse(task.reminder_at)) return { fire: false, once: false, text: null };
+      return { fire: true, once: true, text: `🔔 یادآوری‌ای که خواستی` };
+    }
+
+    default:
+      return { fire: false, once: false, text: null };
+  }
+}
+
 export async function runReminders(env: Env): Promise<void> {
   const { results } = await env.DB.prepare(
     "SELECT * FROM tasks WHERE status != 'done' ORDER BY id LIMIT 500"
@@ -52,18 +117,34 @@ export async function runReminders(env: Env): Promise<void> {
 
   let sent = 0;
   for (const task of results) {
-    const intervalHours = reminderIntervalHours(task);
-    if (intervalHours == null) continue;
-
-    const lastRemindedMs = task.last_reminded_at ? Date.parse(task.last_reminded_at) : 0;
-    const elapsedHours = (Date.now() - lastRemindedMs) / 3_600_000;
-    if (elapsedHours < intervalHours) continue;
-
     try {
-      const delivered = await sendReminder(env, task);
+      let fire = false;
+      let once = false;
+      let head: string | null = null;
+
+      if (task.reminder_type && task.reminder_type !== "default") {
+        const d = dynamicDue(task, Date.now());
+        fire = d.fire;
+        once = d.once;
+        head = d.text;
+      } else {
+        // الگوریتم پلکانی پیش‌فرض
+        const intervalHours = reminderIntervalHours(task);
+        if (intervalHours == null) continue;
+        const lastRemindedMs = task.last_reminded_at ? Date.parse(task.last_reminded_at) : 0;
+        const elapsedHours = (Date.now() - lastRemindedMs) / 3_600_000;
+        if (elapsedHours < intervalHours) continue;
+        fire = true;
+      }
+
+      if (!fire) continue;
+
+      const delivered = await sendReminder(env, task, head);
       if (delivered) sent++;
       await env.DB.prepare(
-        "UPDATE tasks SET last_reminded_at = ?, reminder_count = reminder_count + 1 WHERE id = ?"
+        once
+          ? "UPDATE tasks SET last_reminded_at = ?, reminder_count = reminder_count + 1, reminder_done = 1 WHERE id = ?"
+          : "UPDATE tasks SET last_reminded_at = ?, reminder_count = reminder_count + 1 WHERE id = ?"
       )
         .bind(new Date().toISOString(), task.id)
         .run();
@@ -74,7 +155,7 @@ export async function runReminders(env: Env): Promise<void> {
   console.log(`[reminders] checked=${results.length} sent=${sent}`);
 }
 
-async function sendReminder(env: Env, task: TaskRow): Promise<boolean> {
+async function sendReminder(env: Env, task: TaskRow, head: string | null): Promise<boolean> {
   const assignee = await getUser(env, task.assignee_id);
   const creator = await getUser(env, task.creator_id);
   // یادآوری اول به مسئول می‌رود؛ اگر چتی از او نداریم (هرگز با بات حرف نزده) به ایجادکننده
@@ -83,15 +164,31 @@ async function sendReminder(env: Env, task: TaskRow): Promise<boolean> {
     console.log(`[reminders] no chat_id for task ${task.id} (assignee=${task.assignee_id})`);
     return false;
   }
-  await sendMessage(env, target, reminderText(task, assignee));
+  await sendMessage(env, target, reminderText(task, assignee, head));
   return true;
 }
 
-function reminderText(task: TaskRow, assignee: UserRow | null): string {
+function reminderText(task: TaskRow, assignee: UserRow | null, dynamicHead: string | null): string {
   const title = escapeHtml(truncate(task.title, 80));
   const id = task.id;
   const now = Date.now();
   const count = task.reminder_count;
+
+  if (dynamicHead !== null) {
+    // 🔔 یادآوری داینامیک — الگویی که خود کاربر خواسته
+    const spec = reminderSpecText(task);
+    return [
+      dynamicHead,
+      `تسک «${title}»`,
+      task.due_at || task.due_date ? `🏁 سررسید: ${fmtDate(task.due_date)}${task.due_at ? ` — ساعت ${faDigits(task.due_at.slice(11, 16))}` : ""}` : "",
+      spec ? `🔔 الگو: ${escapeHtml(spec)}` : "",
+      "",
+      `✅ تمومش کردی؟ /done ${id}`,
+      `🔍 جزئیات: /task ${id}`,
+    ]
+      .filter((l) => l !== "")
+      .join("\n");
+  }
 
   let head: string;
   if (task.due_date && now > endOfDayTehran(task.due_date)) {

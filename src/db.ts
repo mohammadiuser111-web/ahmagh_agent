@@ -1,7 +1,7 @@
 /**
  * لایه‌ی دیتابیس — همه‌ی کوئری‌های D1
  */
-import type { Env, PendingDraft, PendingTaskRow, TaskRow, TaskStatus, UserRow } from "./types";
+import type { Env, PendingDraft, PendingTaskRow, ReminderSpec, TaskRow, TaskStatus, UserRow } from "./types";
 
 /** ثبت/به‌روزرسانی کاربر (هر بار که حرف بزند) */
 export async function upsertUser(
@@ -94,13 +94,17 @@ export interface NewTask {
   due_date: string | null;
   due_at: string | null;
   auto_start: boolean;
+  reminder: ReminderSpec | null;
 }
 
 export async function createTask(env: Env, t: NewTask): Promise<TaskRow | null> {
   const now = new Date().toISOString();
+  const r = t.reminder;
   const res = await env.DB.prepare(
-    `INSERT INTO tasks (title, description, creator_id, assignee_id, status, start_date, start_at, due_date, due_at, auto_start, created_at, last_reminded_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO tasks (title, description, creator_id, assignee_id, status, start_date, start_at, due_date, due_at, auto_start,
+                        reminder_type, reminder_time, reminder_interval_hours, reminder_lead_minutes, reminder_at,
+                        created_at, last_reminded_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       t.title,
@@ -113,9 +117,15 @@ export async function createTask(env: Env, t: NewTask): Promise<TaskRow | null> 
       t.due_date,
       t.due_at,
       t.auto_start ? 1 : 0,
+      r ? r.type : "default",
+      r ? r.time : null,
+      r ? r.interval_hours : null,
+      r ? r.lead_minutes : null,
+      r ? r.at : null,
       now,
-      // اولین یادآوری بعد از یک بازه‌ی کامل بیاید، نه بلافاصله بعد از ساخت
-      now
+      // الگوریتم پیش‌فرض: اولین یادآوری بعد از یک بازه‌ی کامل، نه بلافاصله.
+      // یادآوری داینامیک: null شروع می‌شود تا قواعد خودش حاکم باشد.
+      r ? null : now
     )
     .run();
   return getTask(env, res.meta.last_row_id);
@@ -252,6 +262,7 @@ const TASK_EDITABLE_COLUMNS = new Set([
   "title", "description", "assignee_id", "status",
   "start_date", "start_at", "due_date", "due_at", "auto_start",
   "started_at", "completed_at", "last_reminded_at", "reminder_count",
+  "reminder_type", "reminder_time", "reminder_interval_hours", "reminder_lead_minutes", "reminder_at", "reminder_done",
 ]);
 
 export async function setTaskFields(

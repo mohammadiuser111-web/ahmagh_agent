@@ -281,3 +281,124 @@ export function fmtTimeTehran(ts: string | null | undefined): string {
   const tehran = new Date(d.getTime() + TEHRAN_OFFSET_MS);
   return faDigits(`${pad2(tehran.getUTCHours())}:${pad2(tehran.getUTCMinutes())}`);
 }
+
+
+// ============================================================
+// یادآوری داینامیک — استخراج الگو از زبان فارسی
+// ============================================================
+
+export interface ReminderSpecFa {
+  type: "none" | "daily" | "every_hours" | "before_deadline" | "once";
+  time: string | null;
+  interval_hours: number | null;
+  lead_minutes: number | null;
+  at: string | null;
+}
+
+/**
+ * الگوی یادآوری از متن فارسی:
+ * «هر روز ساعت ۵ بهم یاد بده» → daily 17:00
+ * «هر ۳ ساعت یادم کن» → every_hours 3
+ * «۱ ساعت قبل از ددلاین پیام بده» → before_deadline lead 60min
+ * «فردا ساعت ۱۰ صبح یادم بنداز» → once فردا 10:00
+ * «یادآوری نکن» → none
+ * خروجی null یعنی چیزی نگفته → الگوریتم پیش‌فرض (پلکانی)
+ */
+export function parseReminderSpec(text: string, todayISO: string): ReminderSpecFa | null {
+  const t = enDigits(text).replace(/\u200c/g, " ");
+  const isTime = (m: number | null) => (m === null ? null : `${pad2(Math.floor(m / 60))}:${pad2(m % 60)}`);
+
+  // خاموش
+  if (/یادآوری\s*نکن|یادم\s*نکن|یادم\s*نیفته|بدون\s*یادآوری|اعلان\s*نکن|اسپم\s*نکن/.test(t)) {
+    return { type: "none", time: null, interval_hours: null, lead_minutes: null, at: null };
+  }
+
+  // هر روز ساعت H[:MM] [صبح/عصر/...]
+  let m = t.match(/هر\s*روز\s*(?:ساعت\s*)?(\d{1,2})(?::(\d{2}))?\s*(صبح|ظهر|عصر|شب|بامداد)?/);
+  if (m) {
+    const dayMin = parseFaTimeOfDay(`ساعت ${m[1]}${m[2] ? ":" + m[2] : ""} ${m[3] ?? ""}`);
+    if (dayMin !== null) {
+      return { type: "daily", time: isTime(dayMin), interval_hours: null, lead_minutes: null, at: null };
+    }
+  }
+  // ساعت H هر روز (ترتیب برعکس)
+  m = t.match(/ساعت\s*(\d{1,2})(?::(\d{2}))?\s*(صبح|ظهر|عصر|شب|بامداد)?\s*هر\s*روز/);
+  if (m) {
+    const dayMin = parseFaTimeOfDay(`ساعت ${m[1]}${m[2] ? ":" + m[2] : ""} ${m[3] ?? ""}`);
+    if (dayMin !== null) {
+      return { type: "daily", time: isTime(dayMin), interval_hours: null, lead_minutes: null, at: null };
+    }
+  }
+
+  // هر N ساعت
+  m = t.match(/هر\s*(\d{1,2})\s*ساعت/);
+  if (m && Number(m[1]) >= 1 && Number(m[1]) <= 168) {
+    return { type: "every_hours", time: null, interval_hours: Number(m[1]), lead_minutes: null, at: null };
+  }
+
+  // N ساعت/دقیقه/روز قبل از ددلاین (یا «به ددلاین مونده»)
+  m = t.match(
+    /(\d{1,3})\s*(ساعت|دقیقه|روز)\s*(?:(?:به|از|تا)\s*ددلاین\s*)?(?:قبل|مونده|مانده|باقی)/
+  );
+  if (m) {
+    const n = Number(m[1]);
+    const mins = m[2] === "ساعت" ? n * 60 : m[2] === "روز" ? n * 1440 : n;
+    if (mins >= 1 && mins <= 30 * 1440) {
+      return { type: "before_deadline", time: null, interval_hours: null, lead_minutes: mins, at: null };
+    }
+  }
+
+  // یک‌باره: تاریخ/فردا/امروز + ساعت + فعل یادآوری
+  const wantsReminder = /یادم|یادآوری|یاداوری|اعلان|بیدارم|بیدار\s*کن/.test(t);
+  if (wantsReminder) {
+    const dt = parseRelativeFaDateTime(t, todayISO);
+    if (dt.time) {
+      const date = dt.date || todayISO;
+      return { type: "once", time: dt.time, interval_hours: null, lead_minutes: null, at: `${date}T${dt.time}:00+03:30` };
+    }
+  }
+
+  return null;
+}
+
+/** متن فارسی الگوی یادآوری برای کارت تسک */
+export function reminderSpecText(spec: {
+  reminder_type: string;
+  reminder_time: string | null;
+  reminder_interval_hours: number | null;
+  reminder_lead_minutes: number | null;
+  reminder_at: string | null;
+}): string | null {
+  switch (spec.reminder_type) {
+    case "none":
+      return "خاموش (بدون یادآوری)";
+    case "daily":
+      return `هر روز ساعت ${faDigits(spec.reminder_time ?? "")}`;
+    case "every_hours":
+      return spec.reminder_interval_hours
+        ? `هر ${faDigits(spec.reminder_interval_hours)} ساعت`
+        : null;
+    case "before_deadline": {
+      if (!spec.reminder_lead_minutes) return null;
+      const h = spec.reminder_lead_minutes;
+      if (h % 1440 === 0) return `${faDigits(h / 1440)} روز قبل از ددلاین`;
+      if (h % 60 === 0) return `${faDigits(h / 60)} ساعت قبل از ددلاین`;
+      return `${faDigits(h)} دقیقه قبل از ددلاین`;
+    }
+    case "once":
+      return spec.reminder_at ? `یک‌بار — ${fmtDateTimeFa(spec.reminder_at)}` : null;
+    default:
+      return null; // default → روی کارت نمایش نمی‌دهیم
+  }
+}
+
+/** «۱ مهر ۱۴۰۵ — ۱۰:۳۰» برای ISO */
+export function fmtDateTimeFa(iso: string): string {
+  const d = new Date(toIsoTs(iso));
+  if (Number.isNaN(d.getTime())) return "";
+  const tehran = new Date(d.getTime() + TEHRAN_OFFSET_MS);
+  const [jy, jm, jd] = toJalali(tehran.getUTCFullYear(), tehran.getUTCMonth() + 1, tehran.getUTCDate());
+  return `${faDigits(jd)} ${JALALI_MONTHS[jm - 1]} ${faDigits(jy)} — ساعت ${faDigits(
+    `${pad2(tehran.getUTCHours())}:${pad2(tehran.getUTCMinutes())}`
+  )}`;
+}

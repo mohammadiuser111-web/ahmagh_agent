@@ -11,6 +11,8 @@ export function detectListRequest(text: string): "open" | "done" | "all" | null 
   const t = text.replace(/احمق/g, " ").replace(/\u200c/g, " ");
   if (!/تسک|تاسک/.test(t)) return null;
   if (CREATE_VERB.test(t)) return null;
+  // درخواست فایل (خروجی/گزارش/تاریخچه) از مسیر لیست جدا است
+  if (/خروجی|گزارش|تاریخچه|هیستوری|export|اکسپورت|pdf|پی\s?دی\s?اف/i.test(t)) return null;
   if (!/لیست|نشون|نمایش|بگو|بین|بده|دارم|داریم|چیه|چی هست|چه/.test(t)) return null;
 
   if (/تموم|تمام|انجام\s?شده|پایان\s?یافته|تموم\s?شده|all\s?done/.test(t)) return "done";
@@ -22,8 +24,27 @@ export function detectListRequest(text: string): "open" | "done" | "all" | null 
 export function detectExportRequest(text: string): boolean {
   const t = text.replace(/احمق/g, " ").replace(/\u200c/g, " ");
   if (CREATE_VERB.test(t)) return false;
-  const wantsFile = /خروجی|گزارش|export|اکسپورت|pdf|پی\s?دی\s?اف/i.test(t);
+  const wantsFile = /خروجی|گزارش|تاریخچه|هیستوری|export|اکسپورت|pdf|پی\s?دی\s?اف/i.test(t);
   const aboutTasks = /تسک|تاسک/.test(t);
   const asking = /بده|بگیر|کن|میخوام|می\s?خوام|برام/.test(t);
   return wantsFile && aboutTasks && asking;
+}
+
+/** کوئری تسک‌های یک کاربر مشخص — «تسک‌های علی چیا هستن؟»، «ممد چه تسکی داره؟»
+ *  خروجی: ارجاع به کاربر (نام یا @یوزرنیم) یا null */
+export function detectUserTasksQuery(text: string): string | null {
+  const t = text.replace(/احمق/g, " ").replace(/\u200c/g, " ").trim();
+  if (CREATE_VERB.test(t)) return null;
+  if (!/تسک|تاسک|کار/.test(t)) return null;
+
+  // «تسک‌های X» / «تسک های X» — X تا انتهای جمله یا فعل پرسشی
+  let m = t.match(/تسک\s*های\s+(?:@?)([\w\u0600-\u06FF]+)(?:\s+(?:چیا|چی|کی|رو|را|هستن|است|داره|داره|بگو|نشون|نمایش))?/);
+  if (m) return m[1];
+  // «X چه تسکی داره؟» / «X چه کارهایی داره؟»
+  m = t.match(/(@?[\w\u0600-\u06FF]+)\s+چه\s*(تسک|تاسک|کار\s*هایی|کارهایی)\s*(ی)?\s*دار/);
+  if (m) return m[1];
+  // «برای X چه تسکی» — فقط وقتی پرسشی است
+  m = t.match(/برای\s+(@?[\w\u0600-\u06FF]+)\s+چه\s*(تسک|تاسک|کار)/);
+  if (m) return m[1];
+  return null;
 }

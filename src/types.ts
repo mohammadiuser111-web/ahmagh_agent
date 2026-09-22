@@ -39,6 +39,13 @@ export interface TaskRow {
   due_at: string | null;       // زمان سررسید دقیق اگر ساعت گفته شده باشد (ISO 8601 +03:30)
   completed_at: string | null; // لحظه‌ی واقعی اتمام (ISO 8601)
   auto_start: number;          // 1 = با رسیدن زمان شروع، خودکار «در حال انجام» شود
+  // 🔔 یادآوری داینامیک (فاز ۵) — کاربر خودش الگو را تعیین می‌کند
+  reminder_type: string;       // default | none | daily | every_hours | before_deadline | once
+  reminder_time: string | null;      // "HH:MM" برای daily
+  reminder_interval_hours: number | null; // برای every_hours
+  reminder_lead_minutes: number | null;   // برای before_deadline
+  reminder_at: string | null;       // ISO برای once
+  reminder_done: number;            // 1 = یادآوریِ یک‌باره ارسال شد
   created_at: string;
   last_reminded_at: string | null;
   reminder_count: number;
@@ -67,6 +74,16 @@ export interface PendingDraft {
   status: TaskStatus;
   start_date: string | null;
   start_at: string | null;
+  reminder: ReminderSpec | null;
+}
+
+/** الگوی یادآوری استخراج‌شده از حرف کاربر */
+export interface ReminderSpec {
+  type: "none" | "daily" | "every_hours" | "before_deadline" | "once";
+  time: string | null;          // "HH:MM" برای daily / once
+  interval_hours: number | null; // every_hours
+  lead_minutes: number | null;   // before_deadline
+  at: string | null;             // ISO برای once
 }
 
 /** ردیف جدول pending_tasks */
@@ -90,5 +107,10 @@ export interface ParsedTask {
   due_date: string;     // "" اگر نگفته باشد
   due_time: string;     // "HH:MM" یا "" اگر ساعت نگفته باشد
   due_phrase: string;   // عین عبارت تاریخ/ساعت پایان از متن کاربر
+  // یادآوری داینامیک — تشخیص از زبان طبیعی
+  reminder_kind: "" | "none" | "daily" | "every_hours" | "before_deadline" | "once";
+  reminder_time: string;        // "HH:MM" برای daily/once
+  reminder_hours: number;       // برای every_hours (بازه) یا before_deadline (فاصله تا ددلاین)
+  reminder_date: string;        // YYYY-MM-DD برای once
   status: TaskStatus;
 }

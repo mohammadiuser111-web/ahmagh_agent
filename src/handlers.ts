@@ -1,7 +1,7 @@
 /**
  * ahmagh_agent — مدیریت پیام‌ها، دستورها و دکمه‌های تلگرام
  */
-import type { Env, PendingDraft, TaskRow, TaskStatus, UserRow } from "./types";
+import type { Env, PendingDraft, ReminderSpec, TaskRow, TaskStatus, UserRow } from "./types";
 import {
   assignTask,
   createTask,
@@ -20,7 +20,7 @@ import {
   upsertUser,
 } from "./db";
 import { extractDueDateTime, extractTask } from "./ai";
-import { detectExportRequest, detectListRequest } from "./intent";
+import { detectExportRequest, detectListRequest, detectUserTasksQuery } from "./intent";
 import { cmdRegister, cmdWhoami } from "./auth";
 import { buildHtmlReport, buildPdfReport, buildReportModel, exportKeyboard } from "./exporter";
 import { answerCallbackQuery, editMessageText, escapeHtml, sendDocument, sendMessage } from "./telegram";
@@ -34,7 +34,16 @@ import {
   taskCard,
   truncate,
 } from "./format";
-import { enDigits, faDigits, fmtDate, fmtTimeTehran, parseRelativeFaDateTime, todayTehranISO } from "./dates";
+import {
+  enDigits,
+  faDigits,
+  fmtDate,
+  fmtTimeTehran,
+  parseRelativeFaDateTime,
+  parseReminderSpec,
+  reminderSpecText,
+  todayTehranISO,
+} from "./dates";
 
 /** واژه‌ی بیدارکننده‌ی بات 😄 */
 const TRIGGER_RE = /احمق|ahmagh/i;
@@ -56,6 +65,7 @@ const WELCOME = `سلام! من <b>احمق‌ایجنت</b> هستم 🤖
 
 👑 /register &lt;نام‌کاربری&gt; &lt;رمز&gt; — ثبت‌نام (با مشخصات ادمین → ادمین!)
 
+از منوی پایین هم می‌تونی استفاده کنی 👇 (/menu)
 /help — همه‌ی دستورها`;
 
 const HELP = `🤖 <b>راهنمای احمق‌ایجنت</b>
@@ -78,6 +88,7 @@ const HELP = `🤖 <b>راهنمای احمق‌ایجنت</b>
 /register &lt;نام‌کاربری&gt; &lt;رمز&gt; — ثبت‌نام 👑 (با مشخصات ادمین → نقش ادمین)
 /whoami — حساب و نقش من
 /export — خروجی گزارشی از تسک‌ها (HTML یا PDF)
+/menu — منوی دکمه‌ای 🎛 (ساخت/لیست/حذف/خروجی + بخش ادمین)
 /help — همین راهنما
 
 <b>وضعیت‌ها:</b> not_started / in_progress / done
@@ -91,7 +102,9 @@ const HELP = `🤖 <b>راهنمای احمق‌ایجنت</b>
 • ساعت هم می‌فهمم: «تا فردا ساعت ۱۰:۳۰ عصر» یا «تا شنبه ۱۲ ظهر»
 • با رسیدن زمان شروع، وضعیت خودکار «در حال انجام» می‌شه 🚦
 • بدون دستور هم می‌تونی بگی: «احمق تسک‌های منو لیست کن» یا «احمق یه خروجی از تسک‌هام بده»
-• فقط ادمین می‌تونه برای دیگه‌ها تسک بسازه؛ بقیه برای خودشون`;
+• فقط ادمین می‌تونه برای دیگه‌ها تسک بسازه؛ بقیه برای خودشون
+• 🔔 یادآوری داینامیک: موقع ساخت بگو چطور یادت بزنیم — «هر روز ساعت ۸ صبح»، «هر ۳ ساعت»، «۱ ساعت قبل از ددلاین»، «فردا ساعت ۱۰ یادم بنداز» یا «یادآوری نکن». با /edit هم عوض می‌شه.
+• ادمین: «تسک‌های علی چیا هستن؟» یا /menu ← 👥 کاربرها`;
 
 const HINT = `من فقط وقتی کامل بیدار می‌شم که صدام کنی «احمق» 😅
 
@@ -117,6 +130,126 @@ export async function handleUpdate(env: Env, update: unknown): Promise<void> {
 // پیام‌ها
 // ============================================================
 
+/** منوی اصلی — دکمه‌های آماده (کیبورد دائمی تلگرام) */
+function mainKeyboard(isAdmin: boolean) {
+  const rows: { text: string }[][] = [
+    [{ text: "➕ تسک جدید" }, { text: "📋 تسک‌های من" }],
+    [{ text: "🕘 تموم‌شده‌ها" }, { text: "📤 خروجی" }],
+  ];
+  if (isAdmin) rows.push([{ text: "👥 کاربرها" }, { text: "🌐 تسک‌های همه" }]);
+  rows.push([{ text: "❓ راهنما" }]);
+  return { keyboard: rows, resize_keyboard: true, is_persistent: true };
+}
+
+/** مسیریابی متنِ دکمه‌های منو */
+async function onMenuButton(env: Env, msg: any, text: string): Promise<boolean> {
+  const me = await getUser(env, msg.from.id);
+  const isAdmin = me?.role === "admin";
+  // نرمال‌سازی هر دو طرف (نیم‌فاصله/فاصله‌های چندتایی) تا دکمه‌ها همیشه match شوند
+  const norm = (x: string) => x.replace(/‌/g, " ").replace(/\s+/g, " ").trim();
+  const t = norm(text);
+  const menuTexts: Record<string, string> = {
+    "➕ تسک جدید": "new",
+    "📋 تسک‌های من": "mine",
+    "🕘 تموم‌شده‌ها": "done",
+    "📤 خروجی": "export",
+    "👥 کاربرها": "users",
+    "🌐 تسک‌های همه": "all",
+    "❓ راهنما": "help",
+  };
+  const action = Object.entries(menuTexts).find(([k]) => norm(k) === t)?.[1];
+  if (!action) return false;
+  if (!isAdmin && (action === "users" || action === "all")) {
+    await sendMessage(env, msg.chat.id, "این بخش فقط برای ادمین است 👑");
+    return true;
+  }
+  switch (action) {
+    case "new":
+      await sendMessage(
+        env,
+        msg.chat.id,
+        "بنویسش که بسازم! مثلاً:\n«احمق یه تسک بساز: تماس با مشتری، تا فردا ساعت ۵ عصر — هر روز ساعت ۱۰ صبح یادم کن»"
+      );
+      return true;
+    case "mine":
+      await sendTaskList(env, msg, "");
+      return true;
+    case "done":
+      await sendTaskList(env, msg, "done");
+      return true;
+    case "export":
+      await cmdExport(env, msg);
+      return true;
+    case "users":
+      await sendUserList(env, msg);
+      return true;
+    case "all":
+      await sendAllUsersTasks(env, msg);
+      return true;
+    case "help":
+      await sendMessage(env, msg.chat.id, HELP, { reply_markup: mainKeyboard(isAdmin) });
+      return true;
+  }
+  return false;
+}
+
+/** لیست کاربرها برای ادمین (دکمه شیشه‌ای → تسک‌های هر کاربر) */
+async function sendUserList(env: Env, msg: any): Promise<void> {
+  const users = await recentUsers(env, 50);
+  const me = await getUser(env, msg.from.id);
+  const rows = await env.DB.prepare(
+    "SELECT user_id, first_name, username, role FROM users ORDER BY updated_at DESC LIMIT 25"
+  ).all<{ user_id: number; first_name: string | null; username: string | null; role: string }>();
+  const list = (rows.results ?? [])
+    .map((u) => [
+      {
+        text: `${u.role === "admin" ? "👑" : "👤"} ${u.first_name ?? "?"}${u.username ? ` (@${u.username})` : ""}`,
+        callback_data: `usr|${u.user_id}`,
+      },
+    ]);
+  await sendMessage(
+    env,
+    msg.chat.id,
+    "👥 <b>کاربرهای بات</b>\nروی هر کدام بزن تا تسک‌هاش رو ببینی:",
+    { reply_markup: { inline_keyboard: list.length ? list : [[{ text: "کسی نیست 🤷", callback_data: "noop" }]] } }
+  );
+  void users; void me;
+}
+
+/** تسک‌های همه‌ی کاربرها + نزدیک‌ترین ددلاین‌ها (ادمین) */
+async function sendAllUsersTasks(env: Env, msg: any): Promise<void> {
+  const rows = await env.DB.prepare(
+    `SELECT t.*, u.first_name AS u_name FROM tasks t JOIN users u ON u.user_id = t.assignee_id
+     WHERE t.status != 'done' ORDER BY COALESCE(t.due_at, t.due_date || 'T23:59:59+03:30') ASC LIMIT 30`
+  ).all<TaskRow & { u_name: string | null }>();
+  const tasks = rows.results ?? [];
+  if (!tasks.length) {
+    await sendMessage(env, msg.chat.id, "هیچ تسک بازی وجود نداره 🎉");
+    return;
+  }
+  const lines = tasks.map((t) => {
+    const dueMs = t.due_at ? Date.parse(t.due_at) : t.due_date ? endOfDayMs(t.due_date) : Infinity;
+    const left = dueMs === Infinity ? "بدون ددلاین" : humanizeFa(dueMs);
+    return `${STATUS_EMOJI[t.status]} <b>${escapeHtml(truncate(t.title, 40))}</b> — ${escapeHtml(t.u_name ?? "?")} (${left})`;
+  });
+  const nearest = tasks[0];
+  await sendMessage(
+    env,
+    msg.chat.id,
+    `🌐 <b>تسک‌های بازِ همه</b> (${faDigits(tasks.length)}):\n\n${lines.join("\n")}\n\n⏰ <b>نزدیک‌ترین ددلاین:</b> «${escapeHtml(truncate(nearest.title, 40))}» — ${escapeHtml(nearest.u_name ?? "?")}`
+  );
+}
+
+function endOfDayMs(iso: string): number {
+  return Date.parse(`${iso}T23:59:59+03:30`);
+}
+function humanizeFa(dueMs: number): string {
+  const h = (dueMs - Date.now()) / 3_600_000;
+  if (h < 0) return "گذشته! ⚠️";
+  if (h < 24) return `${faDigits(Math.max(1, Math.round(h)))} ساعت مونده`;
+  return `${faDigits(Math.round(h / 24))} روز مونده`;
+}
+
 async function onMessage(env: Env, msg: any): Promise<void> {
   const from = msg?.from;
   if (!from || from.is_bot) return;
@@ -130,15 +263,23 @@ async function onMessage(env: Env, msg: any): Promise<void> {
     await onCommand(env, msg, text);
     return;
   }
+  // دکمه‌های منو
+  if (await onMenuButton(env, msg, text)) return;
   if (TRIGGER_RE.test(text)) {
-    // نیت‌های غیر از ساخت: لیست / خروجی
+    // نیت‌های غیر از ساخت: خروجی / لیست / کوئری کاربر (ادمین)
+    // (خروجی اول چک می‌شود: «خروجی تسک‌های منو بده» نباید به لیست یا ساخت برسد)
+    if (detectExportRequest(text)) {
+      await cmdExport(env, msg);
+      return;
+    }
     const listMode = detectListRequest(text);
     if (listMode) {
       await sendTaskList(env, msg, listMode === "all" ? "all" : listMode === "done" ? "done" : "");
       return;
     }
-    if (detectExportRequest(text)) {
-      await cmdExport(env, msg);
+    const userQuery = detectUserTasksQuery(text);
+    if (userQuery) {
+      await cmdUserTasksQuery(env, msg, userQuery);
       return;
     }
     await createTaskFromText(env, msg, text);
@@ -159,9 +300,21 @@ async function onCommand(env: Env, msg: any, text: string): Promise<void> {
   const arg = parts.slice(1).join(" ").trim();
 
   switch (cmd) {
-    case "/start":
-      await sendMessage(env, chatId, WELCOME);
+    case "/start": {
+      const me0 = await getUser(env, msg.from.id);
+      await sendMessage(env, chatId, WELCOME, { reply_markup: mainKeyboard(me0?.role === "admin") });
       return;
+    }
+    case "/menu": {
+      const me1 = await getUser(env, msg.from.id);
+      await sendMessage(
+        env,
+        chatId,
+        "🎛 <b>منوی احمق‌ایجنت</b>\nاز دکمه‌های پایین استفاده کن یا طبیعی حرف بزن!",
+        { reply_markup: mainKeyboard(me1?.role === "admin") }
+      );
+      return;
+    }
     case "/help":
       await sendMessage(env, chatId, HELP);
       return;
@@ -235,15 +388,37 @@ async function createTaskFromText(env: Env, msg: any, text: string): Promise<voi
 
   const me = await getUser(env, msg.from.id);
   const isAdmin = me?.role === "admin";
-  const { user: resolved, note: assignNote } = await resolveAssignee(env, parsed.assignee_name, msg.from.id);
+
+  // 👷 استخراج قطعی مسئول: «برای @یوزر» یا «برای اسم» اگر بین کاربرهای شناخته‌شده باشد
+  if (!parsed.assignee_name) {
+    const mA = text.match(/برای\s+(@?[\w\u0600-\u06FF]+)/);
+    if (mA) {
+      const ref = mA[1];
+      if (ref.startsWith("@")) {
+        const known = await findUserByUsername(env, ref.slice(1).toLowerCase());
+        // ناشناس هم عبور می‌دهد تا ادمین لیست انتخاب کاربر را ببیند
+        if (known || isAdmin) parsed.assignee_name = ref;
+      } else {
+        const known = await findUserByName(env, ref);
+        if (known) parsed.assignee_name = ref;
+      }
+    }
+  }
+
+  const { user: resolved, note: assignNote, unknownMention } = await resolveAssignee(env, parsed.assignee_name, msg.from.id);
   let assignee = resolved;
   let note: string | null = assignNote;
+  let showUserPicker = false;
   if (!isAdmin && resolved.user_id !== msg.from.id) {
     // ⛓ فقط ادمین می‌تواند برای دیگری تسک بسازد
     assignee = me ?? resolved;
     note = [assignNote, "⛓ فقط ادمین می‌تونه برای دیگه‌ها تسک بسازه؛ فعلاً خودت مسئولش شدی."]
       .filter(Boolean)
       .join("\n");
+  } else if (isAdmin && unknownMention) {
+    // 👑 ادمین @ناشناس زد → بعد از ساخت، لیست کاربرها برای انتخاب می‌آید
+    showUserPicker = true;
+    assignee = me ?? resolved;
   }
   const today = todayTehranISO();
 
@@ -301,6 +476,27 @@ async function createTaskFromText(env: Env, msg: any, text: string): Promise<voi
     st = null;
   }
 
+  // 🔔 یادآوری داینامیک — اول قواعد قطعی، بعد پیشنهاد AI
+  let reminder: ReminderSpec | null = parseReminderSpec(text, today);
+  if (!reminder && parsed.reminder_kind) {
+    const rk = parsed.reminder_kind;
+    if (rk === "none") reminder = { type: "none", time: null, interval_hours: null, lead_minutes: null, at: null };
+    else if (rk === "daily" && parsed.reminder_time)
+      reminder = { type: "daily", time: parsed.reminder_time, interval_hours: null, lead_minutes: null, at: null };
+    else if (rk === "every_hours" && parsed.reminder_hours > 0)
+      reminder = { type: "every_hours", time: null, interval_hours: parsed.reminder_hours, lead_minutes: null, at: null };
+    else if (rk === "before_deadline" && parsed.reminder_hours > 0)
+      reminder = { type: "before_deadline", time: null, interval_hours: null, lead_minutes: Math.round(parsed.reminder_hours * 60), at: null };
+    else if (rk === "once" && parsed.reminder_time)
+      reminder = {
+        type: "once",
+        time: parsed.reminder_time,
+        interval_hours: null,
+        lead_minutes: null,
+        at: `${(sd || today)}T${parsed.reminder_time}:00+03:30`,
+      };
+  }
+
   const start_date = sd || today;
   const due_date = dd || "";
   // ⏰ ساعت شروع/پایان اگر گفته شده باشد → timestamp کامل با offset تهران
@@ -318,6 +514,7 @@ async function createTaskFromText(env: Env, msg: any, text: string): Promise<voi
         status: parsed.status,
         start_date,
         start_at,
+        reminder,
       });
       await sendMessage(
         env,
@@ -334,7 +531,7 @@ async function createTaskFromText(env: Env, msg: any, text: string): Promise<voi
     return;
   }
 
-  await createAndAnnounceTask(
+  const task = await createAndAnnounceTask(
     env,
     msg,
     {
@@ -347,9 +544,33 @@ async function createTaskFromText(env: Env, msg: any, text: string): Promise<voi
       start_at,
       due_date,
       due_at,
+      reminder,
     },
     note
   );
+
+  // 👑 ادمین @ناشناس زد → دکمه‌های انتخاب کاربر
+  if (showUserPicker && task) {
+    const rows = await env.DB.prepare(
+      "SELECT user_id, first_name, username, role FROM users WHERE user_id != ? ORDER BY updated_at DESC LIMIT 15"
+    )
+      .bind(msg.from.id)
+      .all<{ user_id: number; first_name: string | null; username: string | null; role: string }>();
+    const kb = (rows.results ?? []).map((u) => [
+      {
+        text: `${u.role === "admin" ? "👑" : "👤"} ${u.first_name ?? "?"}${u.username ? ` (@${u.username})` : ""}`,
+        callback_data: `asg|${task.id}|${u.user_id}`,
+      },
+    ]);
+    if (kb.length) {
+      await sendMessage(
+        env,
+        msg.chat.id,
+        `🤔 «${escapeHtml(parsed.assignee_name)}» بین کاربرهای بات نبود. تسک ساخته شد ولی فعلاً خودت مسئولش هستی — یکی از این‌ها رو انتخاب کن تا واگذارش کنم:`,
+        { reply_markup: { inline_keyboard: kb } }
+      );
+    }
+  }
 }
 
 /** ساخت نهایی تسک + ارسال کارت به سازنده و مسئول */
@@ -366,25 +587,30 @@ async function createAndAnnounceTask(
     start_at: string | null;
     due_date: string;
     due_at: string | null;
+    reminder: ReminderSpec | null;
   },
   note?: string | null
-): Promise<void> {
+): Promise<TaskRow | null> {
   // 🚦 اگر شروع در آینده باشد، با رسیدنش خودکار «در حال انجام» می‌شود
   const startInFuture =
     (fields.start_at !== null && Date.parse(fields.start_at) > Date.now()) ||
     (fields.start_date !== null && fields.start_date > todayTehranISO());
 
+  // شروعِ امروز یا گذشته → بلافاصله «در حال انجام» (الزام: انتقال خودکار)
+  const effectiveStatus: TaskStatus =
+    !startInFuture && fields.status === "not_started" ? "in_progress" : fields.status;
   const task = (await createTask(env, {
     title: fields.title,
     description: fields.description,
     creator_id: fields.creator_id,
     assignee_id: fields.assignee.user_id,
-    status: fields.status,
+    status: effectiveStatus,
     start_date: fields.start_date,
     start_at: fields.start_at,
     due_date: fields.due_date,
     due_at: fields.due_at,
     auto_start: startInFuture,
+    reminder: fields.reminder,
   }))!;
   const creator = await getUser(env, fields.creator_id);
 
@@ -396,6 +622,16 @@ async function createAndAnnounceTask(
         ? `از ${fmtDate(fields.start_date)} ساعت ${fmtTimeTehran(fields.start_at)} به‌صورت خودکار «در حال انجام» می‌شه 🚦`
         : `از ${fmtDate(fields.start_date)} به‌صورت خودکار «در حال انجام» می‌شه 🚦`
     );
+  }
+  if (fields.reminder) {
+    const rt = reminderSpecText({
+      reminder_type: fields.reminder.type,
+      reminder_time: fields.reminder.time,
+      reminder_interval_hours: fields.reminder.interval_hours,
+      reminder_lead_minutes: fields.reminder.lead_minutes,
+      reminder_at: fields.reminder.at,
+    });
+    if (rt) notes.push(`🔔 یادآوری: ${rt}`);
   }
 
   await sendMessage(
@@ -410,10 +646,11 @@ async function createAndAnnounceTask(
     await sendMessage(
       env,
       fields.assignee.chat_id,
-      `👷 ${displayName(creator)} یه تسک برایت ساخت:\n\n${taskCard(task, creator, fields.assignee)}`,
+      `${creator?.role === "admin" ? "👑" : "👷"} <b>${displayName(creator)}</b> یه تسک برایت ساخت:\n\n${taskCard(task, creator, fields.assignee)}`,
       { reply_markup: statusKeyboard(task) }
     );
   }
+  return task;
 }
 
 const PENDING_TTL_MS = 6 * 3_600_000; // جوابِ «تاریخ پایان» تا ۶ ساعت اعتبار دارد
@@ -474,6 +711,7 @@ async function tryPendingDeadlineReply(env: Env, msg: any, text: string): Promis
     start_at: draft.start_at,
     due_date: deadline.date,
     due_at,
+    reminder: draft.reminder ?? null,
   });
   return true;
 }
@@ -501,22 +739,26 @@ async function resolveAssignee(
   env: Env,
   name: string,
   creatorId: number
-): Promise<{ user: UserRow; note: string | null }> {
+): Promise<{ user: UserRow; note: string | null; unknownMention: boolean }> {
   const me = await getUser(env, creatorId);
   const clean = (name || "").trim();
-  if (!clean) return { user: me!, note: null };
+  if (!clean) return { user: me!, note: null, unknownMention: false };
   const lower = clean.replace(/^@/, "").toLowerCase();
-  if (["من", "خودم", "خودمم", "me", "myself", "من خودم"].includes(lower)) return { user: me!, note: null };
+  if (["من", "خودم", "خودمم", "me", "myself", "من خودم"].includes(lower)) return { user: me!, note: null, unknownMention: false };
 
   const byUsername = await findUserByUsername(env, lower);
-  if (byUsername) return { user: byUsername, note: null };
+  if (byUsername) return { user: byUsername, note: null, unknownMention: false };
 
   const byName = await findUserByName(env, clean);
-  if (byName) return { user: byName, note: null };
+  if (byName) return { user: byName, note: null, unknownMention: false };
 
   return {
     user: me!,
-    note: `مسئولِ «${escapeHtml(clean)}» بین کاربرهای بات پیدا نشد؛ فعلاً خودت مسئول شدی. وقتی اون هم با بات حرف زد، با /assign می‌تونی تسک رو بهش واگذار کنی.`,
+    // اگر با @ شروع می‌شود، یوزرنیمِ ناشناس است → برای ادمین انتخابگر باز می‌شود
+    unknownMention: clean.startsWith("@"),
+    note: clean.startsWith("@")
+      ? `یوزرنیم «${escapeHtml(clean)}» بین کاربرهای بات پیدا نشد.`
+      : `مسئولِ «${escapeHtml(clean)}» بین کاربرهای بات پیدا نشد؛ فعلاً خودت مسئول شدی. وقتی اون هم با بات حرف زد، با /assign می‌تونی تسک رو بهش واگذار کنی.`,
   };
 }
 
@@ -705,6 +947,63 @@ async function cmdDelete(env: Env, msg: any, arg: string): Promise<void> {
 
 
 // ============================================================
+// کوئری ادمین: «تسک‌های علی چیا هستن؟»
+// ============================================================
+
+async function cmdUserTasksQuery(env: Env, msg: any, ref: string): Promise<void> {
+  const me = await getUser(env, msg.from.id);
+  if (me?.role !== "admin") {
+    await sendMessage(env, msg.chat.id, "فقط ادمین می‌تونه تسک‌های بقیه رو ببینه 👑");
+    return;
+  }
+  const clean = ref.replace(/^@/, "").trim();
+  let target: UserRow | null = await findUserByUsername(env, clean.toLowerCase());
+  if (!target) target = await findUserByName(env, clean);
+  if (!target) {
+    await sendMessage(env, msg.chat.id, `🤔 کاربری به نام «${escapeHtml(clean)}» پیدا نشد. با /menu ← 👥 کاربرها لیست را ببین.`);
+    return;
+  }
+  await sendUserTasksAdmin(env, msg.chat.id, target.user_id);
+}
+
+async function sendUserTasksAdmin(env: Env, chatId: number, userId: number): Promise<void> {
+  const target = await getUser(env, userId);
+  const rows = await env.DB.prepare(
+    "SELECT * FROM tasks WHERE assignee_id = ? ORDER BY id DESC LIMIT 30"
+  )
+    .bind(userId)
+    .all<TaskRow>();
+  const tasks = (rows.results ?? []).sort(byNearestDeadline);
+  const name = target ? displayName(target) : "؟";
+  if (!tasks.length) {
+    await sendMessage(env, chatId, `👤 <b>${escapeHtml(name)}</b> هنوز تسکی نداره.`);
+    return;
+  }
+  const open = tasks.filter((t) => t.status !== "done");
+  const done = tasks.filter((t) => t.status === "done");
+  const lines = open.map((t) => {
+    const dueMs = t.due_at ? Date.parse(t.due_at) : t.due_date ? endOfDayMs(t.due_date) : Infinity;
+    const left = dueMs === Infinity ? "بدون ددلاین" : humanizeFa(dueMs);
+    return `${STATUS_EMOJI[t.status]} ${escapeHtml(truncate(t.title, 40))} — ${left} ${t.due_date ? `(${fmtDate(t.due_date)})` : ""}`;
+  });
+  const nearest = open[0]
+    ? `\n\n⏰ <b>نزدیک‌ترین ددلاین:</b> «${escapeHtml(truncate(open[0].title, 40))}» — ${humanizeFa(open[0].due_at ? Date.parse(open[0].due_at) : endOfDayMs(open[0].due_date ?? ""))}`
+    : "";
+  await sendMessage(
+    env,
+    chatId,
+    `👤 تسک‌های <b>${escapeHtml(name)}</b>:\n\n${lines.join("\n") || "(باز نداره)"}${
+      done.length ? `\n\n✅ ${faDigits(done.length)} تسک هم تمام کرده.` : ""
+    }${nearest}`
+  );
+}
+
+function byNearestDeadline(a: TaskRow, b: TaskRow): number {
+  const f = (t: TaskRow) => (t.due_at ? Date.parse(t.due_at) : t.due_date ? endOfDayMs(t.due_date) : Infinity);
+  return f(a) - f(b);
+}
+
+// ============================================================
 // خروجی گزارشی (HTML / PDF)
 // ============================================================
 
@@ -844,8 +1143,9 @@ async function cmdEdit(env: Env, msg: any, arg: string): Promise<void> {
       }
       updates.due_date = deadline.date;
       updates.due_at = deadline.time ? `${deadline.date}T${deadline.time}:00+03:30` : null;
-      // یادآوری‌ها از نو شروع بشن
-      updates.last_reminded_at = new Date().toISOString();
+      // یادآوری‌ها از نو شروع بشن (برای الگوی داینامیک null تا قواعد خودش حاکم باشد)
+      updates.last_reminded_at =
+        task.reminder_type && task.reminder_type !== "default" ? null : new Date().toISOString();
       updates.reminder_count = 0;
       note = "زمان پایان آپدیت شد.";
       break;
@@ -864,6 +1164,36 @@ async function cmdEdit(env: Env, msg: any, arg: string): Promise<void> {
       if (st === "done") updates.completed_at = new Date().toISOString();
       if (st === "in_progress" && !task.started_at) updates.started_at = new Date().toISOString();
       note = "وضعیت عوض شد.";
+      break;
+    }
+    case "reminder": {
+      // «نکن» به‌تنهایی کلمه‌ی کلیدی ندارد — فیلد را کنارش می‌گذاریم تا پارسر بفهمد
+      const spec = parseReminderSpec(/^(نکن|خاموش|خاموشش\s*کن|none|off|نباش)$/i.test(value.trim()) ? "یادآوری نکن" : value, todayTehranISO());
+      if (!spec) {
+        await sendMessage(
+          env,
+          msg.chat.id,
+          "🤔 الگوی یادآوری رو نفهمیدم! مثلاً:\n• <code>/edit 12 یادآوری: هر روز ساعت ۸ صبح</code>\n• <code>/edit 12 یادآوری: هر ۳ ساعت</code>\n• <code>/edit 12 یادآوری: ۱ ساعت قبل از ددلاین</code>\n• <code>/edit 12 یادآوری: نکن</code>"
+        );
+        return;
+      }
+      updates.reminder_type = spec.type;
+      updates.reminder_time = spec.time;
+      updates.reminder_interval_hours = spec.interval_hours;
+      updates.reminder_lead_minutes = spec.lead_minutes;
+      updates.reminder_at = spec.at;
+      updates.reminder_done = 0;
+      // الگوی داینامیک: قواعد خودش (هرروز/هرNساعت/...) ملاک است نه آخرین ارسال
+      updates.last_reminded_at = null;
+      updates.reminder_count = 0;
+      const rt2 = reminderSpecText({
+        reminder_type: spec.type,
+        reminder_time: spec.time,
+        reminder_interval_hours: spec.interval_hours,
+        reminder_lead_minutes: spec.lead_minutes,
+        reminder_at: spec.at,
+      });
+      note = `🔔 یادآوری جدید: ${rt2 ?? "خاموش"}`;
       break;
     }
   }
@@ -906,6 +1236,52 @@ async function onCallbackQuery(env: Env, cq: any): Promise<void> {
     }
     await answerCallbackQuery(env, cq.id, "⏳ در حال ساخت گزارش...");
     await doExport(env, from.id, msg.chat.id, parts[2]);
+    return;
+  }
+
+  // تسک‌های یک کاربر (ادمین): usr|<user_id>
+  if (parts[0] === "usr" && parts.length === 2) {
+    const requester = await getUser(env, from.id);
+    if (requester?.role !== "admin") {
+      await answerCallbackQuery(env, cq.id, "فقط ادمین 👑");
+      return;
+    }
+    await answerCallbackQuery(env, cq.id, "⏳");
+    await sendUserTasksAdmin(env, msg.chat.id, Number(parts[1]));
+    return;
+  }
+
+  // واگذاری مجدد تسک به کاربر انتخابی: asg|<task_id>|<user_id>
+  if (parts[0] === "asg" && parts.length === 3) {
+    const task = await getTask(env, Number(parts[1]));
+    if (!task) {
+      await answerCallbackQuery(env, cq.id, "این تسک حذف شده ❌");
+      return;
+    }
+    if (from.id !== task.creator_id) {
+      await answerCallbackQuery(env, cq.id, "فقط سازنده‌ی تسک می‌تونه انتخاب کنه");
+      return;
+    }
+    const target = await getUser(env, Number(parts[2]));
+    if (!target) {
+      await answerCallbackQuery(env, cq.id, "کاربر پیدا نشد");
+      return;
+    }
+    await setTaskFields(env, task.id, { assignee_id: target.user_id });
+    await answerCallbackQuery(env, cq.id, `✅ مسئول شد: ${target.first_name ?? "?"}`);
+    const creator = await getUser(env, task.creator_id);
+    const updated = await getTask(env, task.id);
+    if (updated) {
+      await sendMessage(env, msg.chat.id, `👷 مسئول تسک ${faDigits(task.id)} الان <b>${escapeHtml(displayName(target))}</b> است.\n\n${taskCard(updated, creator, target)}`);
+      if (target.chat_id && target.user_id !== from.id) {
+        await sendMessage(
+          env,
+          target.chat_id,
+          `${creator?.role === "admin" ? "👑" : "👷"} <b>${escapeHtml(displayName(creator))}</b> یه تسک برایت ساخت:\n\n${taskCard(updated, creator, target)}`,
+          { reply_markup: statusKeyboard(updated) }
+        );
+      }
+    }
     return;
   }
 

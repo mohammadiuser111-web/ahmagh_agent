@@ -4,7 +4,7 @@
  * فالبک ۱: مدل جایگزین (AI_FALLBACK_MODEL) — فالبک ۲: پارسر هیوریستیک بدون AI
  */
 import type { Env, ParsedTask, TaskStatus } from "./types";
-import { parseRelativeFaDateTime, todayJalaliFa, todayTehranISO } from "./dates";
+import { addDaysISO, parseRelativeFaDateTime, todayJalaliFa, todayTehranISO } from "./dates";
 
 const DEFAULT_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 const DEFAULT_FALLBACK_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
@@ -23,12 +23,16 @@ const TASK_JSON_SCHEMA = {
     due_date: { type: "string" },
     due_time: { type: "string" },
     due_phrase: { type: "string" },
+    reminder_kind: { type: "string", enum: ["", "none", "daily", "every_hours", "before_deadline", "once"] },
+    reminder_time: { type: "string" },
+    reminder_hours: { type: "number" },
     status: { type: "string", enum: ["not_started", "in_progress", "done"] },
   },
   required: [
     "intent", "title", "description", "assignee",
     "start_date", "start_time", "start_phrase",
-    "due_date", "due_time", "due_phrase", "status",
+    "due_date", "due_time", "due_phrase",
+    "reminder_kind", "reminder_time", "reminder_hours", "status",
   ],
   additionalProperties: false,
 } as const;
@@ -50,24 +54,38 @@ function weekdayFa(iso: string): string {
 
 function systemPrompt(today: string, todayJalali: string, knownUsers: string): string {
   return [
-    "You are the task-extraction brain of a Persian (Farsi) Telegram task-manager bot.",
-    'Users jokingly address the bot as "احمق" (idiot) — ignore such insults and any meta phrases like "این تسک رو ایجاد کن" / "بساز".',
+    "You are the task-extraction brain of a Persian (Farsi) Telegram task-manager bot named احمق‌ایجنت.",
+    'Users jokingly address the bot as "احمق" (idiot) — ignore such insults and meta phrases like "این تسک رو ایجاد کن" / "بساز".',
     `Today is ${today} (Gregorian, Tehran time) = ${todayJalali} in the Jalali (Shamsi) calendar.`,
-    `Today's weekday: ${weekdayFa(today)}. Weekday names: شنبه=Saturday, یکشنبه=Sunday, دوشنبه=Monday, سه‌شنبه=Tuesday, چهارشنبه=Wednesday, پنجشنبه=Thursday, جمعه=Friday. When the user says a weekday, use the NEXT occurrence strictly AFTER today (if today is that weekday, it means one week later).`,
-    "Extract the task from the user's message and answer ONLY with JSON matching the schema.",
-    "Rules:",
-    '- intent: "create_task" only if the user clearly wants a task created; otherwise "other".',
-    "- title: short imperative task title (max ~90 characters), written in the SAME language as the task text (usually Persian). Never include insults or meta phrases in it.",
-    '- description: remaining details, or "" if none.',
-    '- assignee: who must do the task — a username (without @) or a first name exactly as written. If it refers to the speaker (من/خودم) or nobody else is mentioned, use "".',
-    '- start_date: the date the work BEGINS, only if the message says or implies it (e.g. «فردا باید X بزنم» → tomorrow). If nothing implies a start date, use "" — the bot defaults it to today.',
-    '- due_date: the deadline, only if stated or clearly implied (e.g. «تا فردا», «تا ۱۵ مهر», «شنبه تحویل می‌دم»). Do NOT invent or estimate deadlines. If none is given, use "" — the bot will ask the user.',
-    '- start_time / due_time: "HH:MM" in 24-hour format if the user mentions a specific clock time for the start or the deadline (ساعت ۱۰:۳۰ عصر → "22:30", ۱۲ ظهر → "12:00", ۸ صبح → "08:00"). Otherwise "".',
-    '- start_phrase / due_phrase: copy the EXACT verbatim substring from the user\'s message that expresses the start date/time and the deadline, keeping Persian words and numbers as written (e.g. «فردا ساعت ۱۰:۳۰ عصر», «تا پس فردا شب», «۵ مهر»). Do NOT translate or convert them. Use "" if the message has no start/deadline phrase. IMPORTANT: if the message contains several dates (e.g. someone else\'s deadline AND the task\'s deadline), pick the phrase belonging to THIS task.',
-
-    "Convert Jalali calendar dates (۱۵ مهر ۱۴۰۵) and relative Persian dates (فردا، پس‌فردا، آخر هفته، شنبه، …) to Gregorian ISO using today's date.",
-    '- status: "not_started" unless the message implies work already started ("شروع کردم") or is already finished ("انجام دادم", "تمومه").',
-    `Known users of this bot (use for assignee matching): ${knownUsers || "(none yet)"}.`,
+    `Today's weekday: ${weekdayFa(today)}. Weekdays: شنبه=Saturday, یکشنبه=Sunday, دوشنبه=Monday, سه‌شنبه=Tuesday, چهارشنبه=Wednesday, پنجشنبه=Thursday, جمعه=Friday. A weekday in the message means its NEXT occurrence strictly AFTER today.`,
+    "",
+    "Extract the task and answer ONLY with JSON matching the schema.",
+    "",
+    "FIELD RULES:",
+    '- intent: "create_task" only if the user clearly wants a task created/recorded. For requests to LIST, SHOW, EXPORT, DELETE, or ASK ABOUT tasks, use "other" (the bot handles those separately).',
+    "- title: short imperative task title (max ~90 chars), same language as the task text. Never include insults, meta phrases, dates, or reminder words.",
+    '- description: leftover useful details, or "".',
+    '- assignee: who must DO the task — a @username (without @) or a first name exactly as written. If it refers to the speaker (من/خودم) or nobody else is mentioned, use "".',
+    '- start_date: "YYYY-MM-DD" only if the message clearly says when work BEGINS («از شنبه», «فردا شروع می‌کنم»). Else "".',
+    '- due_date: "YYYY-MM-DD" the deadline, only if stated or clearly implied. Do NOT invent deadlines. Else "".',
+    '- start_phrase / due_phrase: copy the EXACT verbatim substring expressing the start/deadline (keep Persian words/numbers, e.g. «فردا ساعت ۱۰:۳۰ عصر», «تا پس فردا شب», «۵ مهر»). If several dates appear (e.g. someone else\'s deadline AND the task\'s), pick THIS task\'s one. Use "" if none.',
+    '- start_time / due_time: "HH:MM" 24-hour if a specific clock time is given for start/deadline (ساعت ۱۰:۳۰ عصر → "22:30", ۱۲ ظهر → "12:00", ۸ صبح → "08:00"). Else "".',
+    "- reminder_kind: the reminder pattern the user asks for:",
+    '  • "daily" — «هر روز ساعت ۵ بهم یاد بده» → also set reminder_time="17:00".',
+    '  • "every_hours" — «هر ۳ ساعت یادم کن» → reminder_hours=3.',
+    '  • "before_deadline" — «۱ ساعت قبل از ددلاین پیام بده» → reminder_hours=1 (hours before the deadline).',
+    '  • "once" — «فردا ساعت ۱۰ صبح یادم بنداز» → reminder_time="10:00".',
+    '  • "none" — «یادآوری نکن».',
+    '  • "" — no reminder wording at all.',
+    "- reminder_hours: a number (interval hours OR hours-before-deadline depending on kind), else 0.",
+    '- status: "not_started" unless work already started («شروع کردم») or finished («انجام دادم», «تمومه»).',
+    "",
+    `Known users of this bot (match assignee against them): ${knownUsers || "(none yet)"}.`,
+    "",
+    "EXAMPLES:",
+    '«احمق یه تسک بساز: خرید نان، تا فردا» → {"intent":"create_task","title":"خرید نان","description":"","assignee":"","start_date":"","start_time":"","start_phrase":"","due_date":"' + addDaysISO(today, 1) + '","due_time":"","due_phrase":"تا فردا","reminder_kind":"","reminder_time":"","reminder_hours":0,"status":"not_started"}',
+    '«احمق برای علی یه تسک بساز که فردا تا ساعت ۱۰ شب باید لندینگ بزنه، هر روز ساعت ۸ صبح یادش باشه» → {"intent":"create_task","title":"لندینگ بزن","description":"","assignee":"علی","start_date":"","start_time":"","start_phrase":"","due_date":"' + addDaysISO(today, 1) + '","due_time":"22:00","due_phrase":"فردا تا ساعت ۱۰ شب","reminder_kind":"daily","reminder_time":"08:00","reminder_hours":0,"status":"not_started"}',
+    '«احمق تسک‌های منو لیست کن» → {"intent":"other", ...} (not a task creation!)',
   ].join("\n");
 }
 
@@ -232,8 +250,13 @@ function normalize(j: any, originalText: string): ParsedTask {
   // عینِ عبارت تاریخ/ساعت از متن کاربر — بعداً با پارسر قطعی محلی تبدیل می‌شود
   const start_phrase = str(j?.start_phrase).trim().slice(0, 60);
   const due_phrase = str(j?.due_phrase).trim().slice(0, 60);
+  // یادآوری داینامیک
+  const R_KINDS = ["", "none", "daily", "every_hours", "before_deadline", "once"];
+  const reminder_kind = (R_KINDS.includes(str(j?.reminder_kind)) ? str(j?.reminder_kind) : "") as ParsedTask["reminder_kind"];
+  const reminder_time = isTimeStr(str(j?.reminder_time)) ? str(j?.reminder_time) : "";
+  const reminder_hours = typeof j?.reminder_hours === "number" && j.reminder_hours > 0 && j.reminder_hours <= 336 ? j.reminder_hours : 0;
   if (!title) return heuristicParse(originalText);
-  return { intent, title, description, assignee_name, start_date, start_time, start_phrase, due_date, due_time, due_phrase, status };
+  return { intent, title, description, assignee_name, start_date, start_time, start_phrase, due_date, due_time, due_phrase, reminder_kind, reminder_time, reminder_hours, reminder_date: "", status };
 }
 
 /** فالبک بدون AI: جدا کردن عنوان/توضیحات و تشخیص ساده‌ی تاریخ و ساعت‌های رایج فارسی */
@@ -275,6 +298,10 @@ export function heuristicParse(text: string): ParsedTask {
     due_date,
     due_time: due_time ?? "",
     due_phrase,
+    reminder_kind: "",
+    reminder_time: "",
+    reminder_hours: 0,
+    reminder_date: "",
     status: "not_started",
   };
 }

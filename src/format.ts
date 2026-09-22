@@ -3,7 +3,7 @@
  */
 import type { TaskRow, TaskStatus, UserRow } from "./types";
 import { escapeHtml } from "./telegram";
-import { enDigits, faDigits, fmtDate, fmtDateTime, fmtTimeTehran } from "./dates";
+import { enDigits, faDigits, fmtDate, fmtDateTime, fmtTimeTehran, reminderSpecText } from "./dates";
 
 export const STATUS_EMOJI: Record<TaskStatus, string> = {
   not_started: "⬜️",
@@ -62,6 +62,8 @@ export function taskCard(
     `🏁 تاریخ پایان: ${fmtDate(task.due_date)}${task.due_at ? ` — ساعت ${fmtTimeTehran(task.due_at)}` : ""}`
   );
   lines.push(`🗓 ساخته‌شده: ${fmtDateTime(task.created_at)}`);
+  const remText = reminderSpecText(task);
+  if (remText) lines.push(`🔔 یادآوری: ${remText}`);
   if (task.status === "not_started" && task.auto_start) {
     lines.push(
       `⏱ شروع خودکار: ${
@@ -98,6 +100,7 @@ const EDIT_FIELD_ALIASES: Record<string, string> = {
   پایان: "due", پایانش: "due", سررسید: "due", مهلت: "due", تا: "due",
   due: "due", end: "due", deadline: "due",
   وضعیت: "status", وضعیتش: "status", status: "status",
+  یادآوری: "reminder", یادآور: "reminder", یادم: "reminder", یاداوری: "reminder", reminder: "reminder", remind: "reminder",
 };
 
 /** نرمال‌سازی نام فیلد در /edit — خروجی: title/description/assignee/start/due/status یا null */
