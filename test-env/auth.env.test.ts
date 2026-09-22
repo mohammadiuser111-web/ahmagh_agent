@@ -214,20 +214,19 @@ describe("🐞 باگ‌های لایو ۱۱:۵۷", () => {
     expect(h.tasks().length).toBe(2);
   });
 
-  it("ادمینِ متعلق به دیگری → رد؛ ولی اولینِ ورود با admin/1234 ادمین می‌شود", async () => {
-    // در این صحنه «admin» متعلق به اصغر است → نوآمده نمی‌تواند آن را بگیرد
+  it("چند ادمین: هر کس admin/1234 بزند ادمین می‌شود (بدون تصاحب نامِ admin)", async () => {
+    // اصغر (ادمینِ موجود) + نوآمده با همان admin/1234 → هر دو ادمین
     await h.say(NEWBIE, "/login");
     await h.say(NEWBIE, ADMIN_USER);
     await h.say(NEWBIE, ADMIN_PASS);
-    expect(h.lastText(NEWBIE.id)).toContain("تعلق دارد");
-    const u = (h.env.DB as any).raw("SELECT role, logged_in FROM users WHERE user_id=2001").get();
-    expect(u.role).toBe("user"); // ادمین نشد
-    // و با حساب خودش مشکل ندارد
-    await h.say(NEWBIE, "بی‌خیال");
-    await h.callback(NEWBIE, "auth|reg");
-    await h.say(NEWBIE, "newbie_two");
-    await h.say(NEWBIE, "pass1234");
-    expect(h.lastText(NEWBIE.id)).toContain("ثبت‌نام کامل شد");
+    expect(h.lastText(NEWBIE.id)).toContain("خوش برگشتی ادمین");
+    const rows = (h.env.DB as any).raw("SELECT user_id, role, username_login FROM users ORDER BY user_id").all();
+    expect(rows.filter((r: any) => r.role === "admin").length).toBe(2); // اصغر + نوآمده
+    // نامِ «admin» را کسی تصاحب نکرده (بدون تداخل UNIQUE)
+    expect(rows.some((r: any) => r.username_login === "admin")).toBe(false);
+    // منوی نوآمده هم دکمه‌های ادمین دارد
+    const kb = JSON.stringify(h.to(NEWBIE.id).filter((m) => m.kind === "message").at(-1)!.keyboard ?? {});
+    expect(kb).toContain("👥 کاربرها");
   });
 });
 

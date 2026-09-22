@@ -40,6 +40,15 @@ export async function setUserCredentials(
     .run();
 }
 
+/** ارتقا به ادمین — بدون دست‌کشیدن به ثبت‌نامِ شخصی (چند ادمین مجاز است) */
+export async function promoteAdmin(env: Env, userId: number, passwordHash?: string): Promise<void> {
+  await env.DB.prepare(
+    "UPDATE users SET role = 'admin', logged_in = 1, password_hash = COALESCE(password_hash, ?) WHERE user_id = ?"
+  )
+    .bind(passwordHash ?? null, userId)
+    .run();
+}
+
 /** اسم مستعار کاربر — چیزی که بقیه به جای @ می‌بینند */
 export async function setAlias(env: Env, userId: number, alias: string): Promise<void> {
   await env.DB.prepare("UPDATE users SET alias = ? WHERE user_id = ?").bind(alias, userId).run();

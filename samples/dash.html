@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>📊 داشبورد تسک‌ها — همه‌ی کاربرها</title>
+<style>
+  :root{
+    /* تایپوگرافی و رنگ‌های خنثی */
+    --bg:#ffffff; --ink:#111111; --ink-2:#555555; --ink-3:#8a8a8a;
+    --line:#e6e6e6; --line-strong:#cfcfcf; --surface:#fafafa;
+    /* رنگ داده — فقط نمودار و نشان وضعیت */
+    --c-done:#16a34a; --c-doing:#2563eb; --c-todo:#9ca3af; --c-over:#dc2626; --c-warn:#d97706;
+    /* فاصله (پایه ۸px) */
+    --sp-1:8px; --sp-2:16px; --sp-3:24px; --sp-4:32px; --sp-5:48px;
+    /* شعاع */
+    --r-s:4px; --r-m:8px; --r-l:12px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:"Vazirmatn","Vazir",Tahoma,"Segoe UI",sans-serif;
+    background:var(--bg);color:var(--ink);
+    line-height:1.7;font-size:14px;
+    padding:var(--sp-3) var(--sp-2) var(--sp-4);
+  }
+  .wrap{max-width:860px;margin:0 auto}
+  h1{font-size:28px;font-weight:800;letter-spacing:-.5px;line-height:1.3}
+  .sub{color:var(--ink-2);font-size:13px;margin-top:var(--sp-1)}
+  .rule{border:0;border-top:3px solid var(--ink);margin:var(--sp-2) 0 var(--sp-3)}
+  .chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2);white-space:nowrap}
+  .chip i{width:8px;height:8px;border-radius:50%;display:inline-block}
+  .chip.done i{background:var(--c-done)} .chip.doing i{background:var(--c-doing)} .chip.todo i{background:var(--c-todo)}
+  .over{color:var(--c-over);font-weight:700}
+  footer{margin-top:var(--sp-4);text-align:center;color:var(--ink-3);font-size:12px}
+  @media print{body{padding:0}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>📊 داشبورد تسک‌ها</h1>
+    <div class="sub">برای: <b>همه‌ی کاربرها</b> · ۳۱ شهریور ۱۴۰۵ — ۱۳:۲۱ · ۶ تسک</div>
+    <hr class="rule">
+  </header>
+  
+  <div class="kpis"><div class="kpi"><div class="kn">۶</div><div class="kl">مجموع</div></div><div class="kpi"><div class="kn">۴</div><div class="kl">باز</div></div><div class="kpi"><div class="kn">۲</div><div class="kl">در حال انجام</div></div><div class="kpi"><div class="kn">۲</div><div class="kl">تمام‌شده</div></div></div>
+  <div class="alert">⚠️ ۱ تسک از سررسیدشان گذشته‌اند!</div>
+  <div class="grid">
+    <div class="panel">
+      <h2>توزیع وضعیت</h2>
+      <div class="donutwrap"><svg viewBox="0 0 120 120" class="donut" role="img" aria-label="توزیع وضعیت تسک‌ها">
+    <circle r="44" cx="60" cy="60" fill="none" stroke="var(--c-done)" stroke-width="14"
+        stroke-dasharray="92.15 184.31" stroke-dashoffset="0.00"
+        transform="rotate(-90 60 60)"/><circle r="44" cx="60" cy="60" fill="none" stroke="var(--c-doing)" stroke-width="14"
+        stroke-dasharray="92.15 184.31" stroke-dashoffset="-92.15"
+        transform="rotate(-90 60 60)"/><circle r="44" cx="60" cy="60" fill="none" stroke="var(--c-todo)" stroke-width="14"
+        stroke-dasharray="92.15 184.31" stroke-dashoffset="-184.31"
+        transform="rotate(-90 60 60)"/>
+    <text x="60" y="56" text-anchor="middle" class="dt">۶</text>
+    <text x="60" y="74" text-anchor="middle" class="dl">تسک</text>
+  </svg><ul class="legend"><li><i class="dot done"></i>تمام‌شده — <b>۲</b></li><li><i class="dot doing"></i>در حال انجام — <b>۲</b></li><li><i class="dot todo"></i>شروع‌نشده — <b>۲</b></li></ul></div>
+    </div>
+    <div class="panel">
+      <h2>تسک به ازای هر کاربر</h2>
+      <div class="brow">
+        <span class="blabel">ایمان</span>
+        <span class="btrack"><span class="bfill c0" style="width:100%"></span></span>
+        <span class="bval">۳</span>
+      </div><div class="brow">
+        <span class="blabel">سارینا</span>
+        <span class="btrack"><span class="bfill c1" style="width:67%"></span></span>
+        <span class="bval">۲</span>
+      </div><div class="brow">
+        <span class="blabel">ممد</span>
+        <span class="btrack"><span class="bfill c2" style="width:33%"></span></span>
+        <span class="bval">۱</span>
+      </div>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>⏰ نزدیک‌ترین ددلاین‌ها</h2>
+    <table class="mini"><tbody><tr><td class="ttl">تهیه‌ی گزارش فروش مهر</td><td class="over">۲ مهر ۱۴۰۵ — ۰۹:۰۰</td></tr><tr><td class="ttl">تماس با مشتری درباره‌ی فاکتور</td><td class="">۲ مهر ۱۴۰۵ — ۱۲:۰۰</td></tr><tr><td class="ttl">طراحی لندینگ پیچ برای سایت HOMA</td><td class="">۲ مهر ۱۴۰۵ — ۱۸:۰۰</td></tr><tr><td class="ttl">بازبینی کد شاخه feature/auth</td><td class="">۲ مهر ۱۴۰۵ — ۱۶:۳۰</td></tr></tbody></table>
+  </div>
+  <style>
+    .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:var(--sp-1);margin-bottom:var(--sp-2)}
+    .kpi{border:1px solid var(--line);border-radius:var(--r-m);padding:var(--sp-2);text-align:center}
+    .kn{font-size:30px;font-weight:800;line-height:1.2}
+    .kl{font-size:12px;color:var(--ink-2)}
+    .alert{border:1px solid var(--c-over);color:var(--c-over);border-radius:var(--r-m);padding:10px var(--sp-2);margin-bottom:var(--sp-2);font-weight:700}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:var(--sp-2);margin-bottom:var(--sp-2)}
+    .panel{border:1px solid var(--line);border-radius:var(--r-m);padding:var(--sp-2)}
+    .panel h2{font-size:14px;margin-bottom:var(--sp-2)}
+    .donutwrap{display:flex;align-items:center;gap:var(--sp-3);flex-wrap:wrap;justify-content:center}
+    .donut{width:150px;height:150px}
+    .donut .dt{font-size:26px;font-weight:800;fill:var(--ink)}
+    .donut .dl{font-size:10px;fill:var(--ink-3)}
+    .legend{list-style:none;font-size:13px;display:grid;gap:6px}
+    .dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-inline-end:6px}
+    .dot.done{background:var(--c-done)} .dot.doing{background:var(--c-doing)} .dot.todo{background:var(--c-todo)}
+    .brow{display:grid;grid-template-columns:96px 1fr 32px;align-items:center;gap:var(--sp-1);margin-bottom:10px;font-size:12px}
+    .blabel{color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .btrack{background:var(--surface);border:1px solid var(--line);border-radius:999px;height:14px;overflow:hidden}
+    .bfill{display:block;height:100%;border-radius:999px}
+    .bfill.c0{background:var(--c-doing)} .bfill.c1{background:var(--c-done)} .bfill.c2{background:var(--c-warn)}
+    .bval{font-weight:700;text-align:left}
+    .mini{width:100%;border-collapse:collapse;font-size:13px}
+    .mini td{padding:8px 0;border-bottom:1px solid var(--line)}
+    .mini .ttl{font-weight:600}
+    .empty2{color:var(--ink-3);padding:var(--sp-2) 0}
+  </style>
+  <footer>ساخته‌شده توسط احمق‌ایجنت 🤖</footer>
+</div>
+</body>
+</html>

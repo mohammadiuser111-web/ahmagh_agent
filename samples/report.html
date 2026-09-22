@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>📄 گزارش تسک‌ها — همه‌ی کاربرها</title>
+<style>
+  :root{
+    /* تایپوگرافی و رنگ‌های خنثی */
+    --bg:#ffffff; --ink:#111111; --ink-2:#555555; --ink-3:#8a8a8a;
+    --line:#e6e6e6; --line-strong:#cfcfcf; --surface:#fafafa;
+    /* رنگ داده — فقط نمودار و نشان وضعیت */
+    --c-done:#16a34a; --c-doing:#2563eb; --c-todo:#9ca3af; --c-over:#dc2626; --c-warn:#d97706;
+    /* فاصله (پایه ۸px) */
+    --sp-1:8px; --sp-2:16px; --sp-3:24px; --sp-4:32px; --sp-5:48px;
+    /* شعاع */
+    --r-s:4px; --r-m:8px; --r-l:12px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:"Vazirmatn","Vazir",Tahoma,"Segoe UI",sans-serif;
+    background:var(--bg);color:var(--ink);
+    line-height:1.7;font-size:14px;
+    padding:var(--sp-3) var(--sp-2) var(--sp-4);
+  }
+  .wrap{max-width:860px;margin:0 auto}
+  h1{font-size:28px;font-weight:800;letter-spacing:-.5px;line-height:1.3}
+  .sub{color:var(--ink-2);font-size:13px;margin-top:var(--sp-1)}
+  .rule{border:0;border-top:3px solid var(--ink);margin:var(--sp-2) 0 var(--sp-3)}
+  .chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2);white-space:nowrap}
+  .chip i{width:8px;height:8px;border-radius:50%;display:inline-block}
+  .chip.done i{background:var(--c-done)} .chip.doing i{background:var(--c-doing)} .chip.todo i{background:var(--c-todo)}
+  .over{color:var(--c-over);font-weight:700}
+  footer{margin-top:var(--sp-4);text-align:center;color:var(--ink-3);font-size:12px}
+  @media print{body{padding:0}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>📄 گزارش تسک‌ها</h1>
+    <div class="sub">برای: <b>همه‌ی کاربرها</b> · ۳۱ شهریور ۱۴۰۵ — ۱۳:۲۱ · ۶ تسک</div>
+    <hr class="rule">
+  </header>
+  
+  <div class="summary">
+    جمع‌بندی: <b>۶</b> تسک —
+    <b>۲</b> در حال انجام،
+    <b>۲</b> شروع‌نشده،
+    <b>۲</b> تمام‌شده
+    · <span class="over">۱ سررسید گذشته</span>
+  </div>
+  
+  <section><h2>⏳ در حال انجام <span class="count">۲</span></h2>
+    <article class="entry">
+      <div class="no">۰</div>
+      <div class="body">
+        <h3>طراحی لندینگ پیچ برای سایت HOMA</h3>
+        <p>پنج بخش + فرم تماس</p>
+        <div class="meta">
+          <span class="chip doing"><i></i>در حال انجام</span>
+          <span>شروع: ۳۱ شهریور ۱۴۰۵</span>
+          <span class="">پایان: ۲ مهر ۱۴۰۵ — ۱۸:۰۰</span>
+          <span>شناسه: ۵۴</span>
+          <span>مسئول: ایمان</span>
+        </div>
+      </div>
+    </article>
+    <article class="entry">
+      <div class="no">۱</div>
+      <div class="body">
+        <h3>بازبینی کد شاخه feature/auth</h3>
+        
+        <div class="meta">
+          <span class="chip doing"><i></i>در حال انجام</span>
+          <span>شروع: ۳۱ شهریور ۱۴۰۵</span>
+          <span class="">پایان: ۲ مهر ۱۴۰۵ — ۱۶:۳۰</span>
+          <span>شناسه: ۵۶</span>
+          <span>مسئول: سارینا</span>
+        </div>
+      </div>
+    </article></section>
+  
+  <section><h2>🔓 شروع‌نشده <span class="count">۲</span></h2>
+    <article class="entry">
+      <div class="no">۰</div>
+      <div class="body">
+        <h3>تماس با مشتری درباره‌ی فاکتور</h3>
+        
+        <div class="meta">
+          <span class="chip todo"><i></i>شروع‌نشده</span>
+          <span>شروع: ۳۱ شهریور ۱۴۰۵</span>
+          <span class="">پایان: ۲ مهر ۱۴۰۵ — ۱۲:۰۰</span>
+          <span>شناسه: ۵۵</span>
+          <span>مسئول: ایمان</span>
+        </div>
+      </div>
+    </article>
+    <article class="entry">
+      <div class="no">۱</div>
+      <div class="body">
+        <h3>تهیه‌ی گزارش فروش مهر</h3>
+        
+        <div class="meta">
+          <span class="chip todo"><i></i>شروع‌نشده</span>
+          <span>شروع: ۳۱ شهریور ۱۴۰۵</span>
+          <span class="over">پایان: ۲ مهر ۱۴۰۵ — ۰۹:۰۰</span>
+          <span>شناسه: ۵۸</span>
+          <span>مسئول: ممد</span>
+        </div>
+      </div>
+    </article></section>
+  
+  <section><h2>✅ تمام‌شده <span class="count">۲</span></h2>
+    <article class="entry">
+      <div class="no">۰</div>
+      <div class="body">
+        <h3>خرید نان 😄</h3>
+        
+        <div class="meta">
+          <span class="chip done"><i></i>تمام‌شده</span>
+          <span>شروع: ۳۱ شهریور ۱۴۰۵</span>
+          <span class="">پایان: ۳۰ شهریور ۱۴۰۵</span>
+          <span>شناسه: ۵۷</span>
+          <span>مسئول: ایمان</span>
+        </div>
+      </div>
+    </article>
+    <article class="entry">
+      <div class="no">۱</div>
+      <div class="body">
+        <h3>آپدیت سرور به نسخه‌ی جدید</h3>
+        
+        <div class="meta">
+          <span class="chip done"><i></i>تمام‌شده</span>
+          <span>شروع: ۳۱ شهریور ۱۴۰۵</span>
+          <span class="">پایان: ۳۱ شهریور ۱۴۰۵</span>
+          <span>شناسه: ۵۹</span>
+          <span>مسئول: سارینا</span>
+        </div>
+      </div>
+    </article></section>
+  <style>
+    .summary{border:1px solid var(--ink);border-radius:var(--r-m);padding:var(--sp-2);font-size:14px;margin-bottom:var(--sp-3)}
+    section{margin-bottom:var(--sp-3)}
+    h2{font-size:17px;margin-bottom:var(--sp-2);display:flex;align-items:center;gap:var(--sp-1)}
+    .count{border:1px solid var(--line-strong);border-radius:999px;font-size:12px;padding:0 10px;color:var(--ink-2)}
+    .entry{display:flex;gap:var(--sp-2);padding:var(--sp-2) 0;border-bottom:1px solid var(--line)}
+    .no{font-size:20px;font-weight:800;color:var(--ink-3);min-width:32px;line-height:1.2}
+    h3{font-size:15px}
+    .body p{color:var(--ink-2);font-size:13px;margin-top:2px}
+    .meta{display:flex;flex-wrap:wrap;gap:var(--sp-1) var(--sp-2);margin-top:var(--sp-1);font-size:12px;color:var(--ink-3)}
+  </style>
+  <footer>ساخته‌شده توسط احمق‌ایجنت 🤖</footer>
+</div>
+</body>
+</html>

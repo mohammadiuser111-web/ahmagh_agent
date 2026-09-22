@@ -1,21 +1,21 @@
 /**
- * خروجی گزارشی از تسک‌ها — HTML تک‌فایل (RTL، بدون وابستگی خارجی، بدون JS)
+ * خروجی گزارشی از تسک‌ها — HTML تک‌فایل با سه تب (لیستی / گزارش‌طور / داشبورد)
  *
- * سه شکل خروجی:
- *  - list   : جدولی/لیستی
- *  - report : گزارش‌طور (سلسله‌مراتب تحریریه‌ای)
- *  - dash   : داشبورد (KPI + نمودار SVG)
+ *  - تک‌فایل و کاملاً self-contained: فونت Vazirmatn متغیر embed شده، بدون CDN، بدون JS
+ *  - تب‌ها با radio + CSS خالص کار می‌کنند (بدون اسکریپت — امن و سبک)
+ *  - پارامتر style فقط «تبِ پیش‌فرض» را تعیین می‌کند
  *
  * دیزاین (طبق استاندارد frontend-design):
  *  - توکن‌های CSS (رنگ/فاصله/شعاع) — بدون مقدار هاردکد خارج از توکن‌ها
  *  - تم سیاه‌وسفید؛ رنگ فقط برای نمودار و نشانِ وضعیت
- *  - فاصله‌بندی ۸px، شعاع ۴/۸/۱۲، خط‌-height ≥۱.۶، بدون سایه‌ی سنگین
- *  - واکنش‌گرا و مناسب چاپ
+ *  - فاصله‌بندی ۸px، شعاع ۴/۸/۱۲، line-height ≥۱.۶، بدون سایه‌ی سنگین
+ *  - واکنش‌گرا و مناسب چاپ (در چاپ فقط تبِ فعال)
  */
 import type { TaskRow } from "./types";
 import { STATUS_LABEL } from "./format";
 import { escapeHtml } from "./telegram";
 import { faDigits, fmtDate, fmtTimeTehran, todayTehranISO } from "./dates";
+import { VAZIRMATN_WOFF2_B64 } from "./fonts/vazirmatn";
 
 export type ExportStyle = "list" | "report" | "dash";
 
@@ -101,66 +101,18 @@ function statusChip(t: TaskRow): string {
   return `<span class="chip ${cls}"><i></i>${STATUS_LABEL[t.status]}</span>`;
 }
 
-/** توکن‌های دیزاین — تم سیاه‌وسفید؛ رنگ فقط برای داده */
-const TOKENS_CSS = `
-  :root{
-    /* تایپوگرافی و رنگ‌های خنثی */
-    --bg:#ffffff; --ink:#111111; --ink-2:#555555; --ink-3:#8a8a8a;
-    --line:#e6e6e6; --line-strong:#cfcfcf; --surface:#fafafa;
-    /* رنگ داده — فقط نمودار و نشان وضعیت */
-    --c-done:#16a34a; --c-doing:#2563eb; --c-todo:#9ca3af; --c-over:#dc2626; --c-warn:#d97706;
-    /* فاصله (پایه ۸px) */
-    --sp-1:8px; --sp-2:16px; --sp-3:24px; --sp-4:32px; --sp-5:48px;
-    /* شعاع */
-    --r-s:4px; --r-m:8px; --r-l:12px;
-  }
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{
-    font-family:"Vazirmatn","Vazir",Tahoma,"Segoe UI",sans-serif;
-    background:var(--bg);color:var(--ink);
-    line-height:1.7;font-size:14px;
-    padding:var(--sp-3) var(--sp-2) var(--sp-4);
-  }
-  .wrap{max-width:860px;margin:0 auto}
-  h1{font-size:28px;font-weight:800;letter-spacing:-.5px;line-height:1.3}
-  .sub{color:var(--ink-2);font-size:13px;margin-top:var(--sp-1)}
-  .rule{border:0;border-top:3px solid var(--ink);margin:var(--sp-2) 0 var(--sp-3)}
-  .chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2);white-space:nowrap}
-  .chip i{width:8px;height:8px;border-radius:50%;display:inline-block}
-  .chip.done i{background:var(--c-done)} .chip.doing i{background:var(--c-doing)} .chip.todo i{background:var(--c-todo)}
-  .over{color:var(--c-over);font-weight:700}
-  footer{margin-top:var(--sp-4);text-align:center;color:var(--ink-3);font-size:12px}
-  @media print{body{padding:0}}
-`;
+const userName = (m: ReportModel, t: TaskRow) => m.users.find((x) => x.id === t.assignee_id)?.name ?? "—";
 
-function page(m: ReportModel, title: string, body: string): string {
-  return `<!DOCTYPE html>
-<html lang="fa" dir="rtl">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${title} — ${escapeHtml(m.scopeName)}</title>
-<style>${TOKENS_CSS}</style>
-</head>
-<body>
-<div class="wrap">
-  <header>
-    <h1>${title}</h1>
-    <div class="sub">برای: <b>${escapeHtml(m.scopeName)}</b> · ${m.nowFa} · ${faDigits(m.total)} تسک</div>
-    <hr class="rule">
-  </header>
-  ${body}
-  <footer>ساخته‌شده توسط احمق‌ایجنت 🤖</footer>
-</div>
-</body>
-</html>`;
+interface Fragment {
+  css: string;
+  html: string;
 }
 
 // ============================================================
-// ۱) لیستی (جدولی)
+// تب ۱: لیستی (جدولی)
 // ============================================================
 
-function buildList(m: ReportModel): string {
+function renderList(m: ReportModel): Fragment {
   const head = [
     "<th>شناسه</th>",
     "<th>عنوان</th>",
@@ -169,10 +121,6 @@ function buildList(m: ReportModel): string {
     "<th>پایان</th>",
     ...(m.multiUser ? ["<th>مسئول</th>"] : []),
   ].join("");
-  const userName = (t: TaskRow) => {
-    const u = m.users.find((x) => x.id === t.assignee_id);
-    return u ? u.name : "—";
-  };
   const rows = m.tasks
     .map((t) => {
       const cells = [
@@ -181,25 +129,13 @@ function buildList(m: ReportModel): string {
         `<td>${statusChip(t)}</td>`,
         `<td>${t.start_date ? fmtDate(t.start_date) : "—"}</td>`,
         `<td class="${isOverdue(m, t) ? "over" : ""}">${dueText(t)}</td>`,
-        ...(m.multiUser ? [`<td>${escapeHtml(userName(t))}</td>`] : []),
+        ...(m.multiUser ? [`<td>${escapeHtml(userName(m, t))}</td>`] : []),
       ];
       return `<tr>${cells.join("")}</tr>`;
     })
     .join("\n");
-  const empty = m.tasks.length
-    ? ""
-    : `<div class="empty">تسکی نیست — از زندگی لذت ببر 🎉</div>`;
-  return page(
-    m,
-    "📋 فهرست تسک‌ها",
-    `${empty}
-  <div class="tblwrap">
-  <table>
-    <thead><tr>${head}</tr></thead>
-    <tbody>${rows}</tbody>
-  </table>
-  </div>
-  <style>
+  return {
+    css: `
     .tblwrap{overflow-x:auto}
     table{width:100%;border-collapse:collapse;font-size:13px}
     th{font-size:12px;color:var(--ink-2);text-align:right;padding:var(--sp-1);border-bottom:2px solid var(--ink)}
@@ -208,67 +144,66 @@ function buildList(m: ReportModel): string {
     .num{color:var(--ink-3);font-size:12px;white-space:nowrap}
     .ttl{font-weight:600;min-width:200px}
     .desc{color:var(--ink-3);font-size:12px;font-weight:400;margin-top:2px}
-    .empty{padding:var(--sp-4);text-align:center;color:var(--ink-3)}
-  </style>`
-  );
+    .empty{padding:var(--sp-4);text-align:center;color:var(--ink-3)}`,
+    html: m.tasks.length
+      ? `<div class="tblwrap"><table><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>`
+      : `<div class="empty">تسکی نیست — از زندگی لذت ببر 🎉</div>`,
+  };
 }
 
 // ============================================================
-// ۲) گزارش‌طور (تحریریه‌ای)
+// تب ۲: گزارش‌طور (تحریریه‌ای)
 // ============================================================
 
-function buildReport(m: ReportModel): string {
+function renderReport(m: ReportModel): Fragment {
   const entry = (t: TaskRow, i: number) => `
-    <article class="entry">
-      <div class="no">${faDigits(i)}</div>
-      <div class="body">
-        <h3>${escapeHtml(t.title)}</h3>
-        ${t.description ? `<p>${escapeHtml(t.description)}</p>` : ""}
-        <div class="meta">
-          ${statusChip(t)}
-          <span>شروع: ${t.start_date ? fmtDate(t.start_date) : "—"}</span>
-          <span class="${isOverdue(m, t) ? "over" : ""}">پایان: ${dueText(t)}</span>
-          <span>شناسه: ${faDigits(t.id)}</span>
-          ${m.multiUser ? `<span>مسئول: ${escapeHtml(m.users.find((x) => x.id === t.assignee_id)?.name ?? "—")}</span>` : ""}
+      <article class="entry">
+        <div class="no">${faDigits(i)}</div>
+        <div class="body">
+          <h3>${escapeHtml(t.title)}</h3>
+          ${t.description ? `<p>${escapeHtml(t.description)}</p>` : ""}
+          <div class="meta">
+            ${statusChip(t)}
+            <span>شروع: ${t.start_date ? fmtDate(t.start_date) : "—"}</span>
+            <span class="${isOverdue(m, t) ? "over" : ""}">پایان: ${dueText(t)}</span>
+            <span>شناسه: ${faDigits(t.id)}</span>
+            ${m.multiUser ? `<span>مسئول: ${escapeHtml(userName(m, t))}</span>` : ""}
+          </div>
         </div>
-      </div>
-    </article>`;
+      </article>`;
 
   const section = (label: string, rows: TaskRow[]) =>
     rows.length
-      ? `\n  <section><h2>${label} <span class="count">${faDigits(rows.length)}</span></h2>${rows.map(entry).join("")}</section>`
+      ? `\n      <section class="rsec"><h3 class="rh">${label} <span class="count">${faDigits(rows.length)}</span></h3>${rows.map(entry).join("")}</section>`
       : "";
 
-  return page(
-    m,
-    "📄 گزارش تسک‌ها",
-    `
-  <div class="summary">
-    جمع‌بندی: <b>${faDigits(m.total)}</b> تسک —
-    <b>${faDigits(m.inProgress.length)}</b> در حال انجام،
-    <b>${faDigits(m.notStarted.length)}</b> شروع‌نشده،
-    <b>${faDigits(m.done.length)}</b> تمام‌شده
-    ${m.overdue.length ? `· <span class="over">${faDigits(m.overdue.length)} سررسید گذشته</span>` : ""}
-  </div>
-  ${section("⏳ در حال انجام", m.inProgress)}
-  ${section("🔓 شروع‌نشده", m.notStarted)}
-  ${section("✅ تمام‌شده", m.done)}
-  <style>
-    .summary{border:1px solid var(--ink);border-radius:var(--r-m);padding:var(--sp-2);font-size:14px;margin-bottom:var(--sp-3)}
-    section{margin-bottom:var(--sp-3)}
-    h2{font-size:17px;margin-bottom:var(--sp-2);display:flex;align-items:center;gap:var(--sp-1)}
+  return {
+    css: `
+    .summary{border:1px solid var(--ink);border-radius:var(--r-m);padding:var(--sp-2);font-size:14px;margin-bottom:var(--sp-2)}
+    .rsec{margin-bottom:var(--sp-3)}
+    .rh{font-size:16px;margin-bottom:var(--sp-2);display:flex;align-items:center;gap:var(--sp-1)}
     .count{border:1px solid var(--line-strong);border-radius:999px;font-size:12px;padding:0 10px;color:var(--ink-2)}
     .entry{display:flex;gap:var(--sp-2);padding:var(--sp-2) 0;border-bottom:1px solid var(--line)}
     .no{font-size:20px;font-weight:800;color:var(--ink-3);min-width:32px;line-height:1.2}
-    h3{font-size:15px}
-    .body p{color:var(--ink-2);font-size:13px;margin-top:2px}
-    .meta{display:flex;flex-wrap:wrap;gap:var(--sp-1) var(--sp-2);margin-top:var(--sp-1);font-size:12px;color:var(--ink-3)}
-  </style>`
-  );
+    .entry h3{font-size:15px}
+    .entry .body p{color:var(--ink-2);font-size:13px;margin-top:2px}
+    .meta{display:flex;flex-wrap:wrap;gap:var(--sp-1) var(--sp-2);margin-top:var(--sp-1);font-size:12px;color:var(--ink-3)}`,
+    html: `
+    <div class="summary">
+      جمع‌بندی: <b>${faDigits(m.total)}</b> تسک —
+      <b>${faDigits(m.inProgress.length)}</b> در حال انجام،
+      <b>${faDigits(m.notStarted.length)}</b> شروع‌نشده،
+      <b>${faDigits(m.done.length)}</b> تمام‌شده
+      ${m.overdue.length ? `· <span class="over">${faDigits(m.overdue.length)} سررسید گذشته</span>` : ""}
+    </div>
+    ${section("⏳ در حال انجام", m.inProgress)}
+    ${section("🔓 شروع‌نشده", m.notStarted)}
+    ${section("✅ تمام‌شده", m.done)}`,
+  };
 }
 
 // ============================================================
-// ۳) داشبورد (KPI + نمودار SVG)
+// تب ۳: داشبورد (KPI + نمودار SVG)
 // ============================================================
 
 /** دوناتِ وضعیت — رنگ‌ها فقط اینجا */
@@ -301,7 +236,7 @@ function donutSvg(m: ReportModel): string {
 }
 
 /** نمودار میله‌ای افقی — به ازای کاربر (یا وضعیت در حالت تک‌کاربر) */
-function barsSvg(m: ReportModel): { title: string; body: string } {
+function barsBlock(m: ReportModel): { title: string; html: string } {
   const rows = m.multiUser
     ? m.users.slice(0, 8).map((u) => ({ label: u.name, n: u.tasks.length }))
     : [
@@ -320,10 +255,10 @@ function barsSvg(m: ReportModel): { title: string; body: string } {
       </div>`;
     })
     .join("");
-  return { title: m.multiUser ? "تسک به ازای هر کاربر" : "توزیع وضعیت", body: bars };
+  return { title: m.multiUser ? "تسک به ازای هر کاربر" : "توزیع وضعیت", html: bars };
 }
 
-function buildDash(m: ReportModel): string {
+function renderDash(m: ReportModel): Fragment {
   const kpis = [
     { label: "مجموع", n: m.total },
     { label: "باز", n: m.open.length },
@@ -331,9 +266,7 @@ function buildDash(m: ReportModel): string {
     { label: "تمام‌شده", n: m.done.length },
   ];
   const kpiHtml = kpis
-    .map(
-      (k) => `<div class="kpi"><div class="kn">${faDigits(k.n)}</div><div class="kl">${k.label}</div></div>`
-    )
+    .map((k) => `<div class="kpi"><div class="kn">${faDigits(k.n)}</div><div class="kl">${k.label}</div></div>`)
     .join("");
 
   const legend = [
@@ -344,7 +277,7 @@ function buildDash(m: ReportModel): string {
     .map((l) => `<li><i class="dot ${l.c}"></i>${l.label} — <b>${faDigits(l.n)}</b></li>`)
     .join("");
 
-  const bars = barsSvg(m);
+  const bars = barsBlock(m);
 
   const nearest = [...m.open]
     .filter((t) => t.due_date)
@@ -357,7 +290,7 @@ function buildDash(m: ReportModel): string {
     ? `<table class="mini"><tbody>${nearest
         .map(
           (t) =>
-            `<tr><td class="ttl">${escapeHtml(t.title)}</td><td class="${isOverdue(m, t) ? "over" : ""}">${dueText(t)}</td></tr>`
+            `<tr><td class="mttl">${escapeHtml(t.title)}</td><td class="${isOverdue(m, t) ? "over" : ""}">${dueText(t)}</td></tr>`
         )
         .join("")}</tbody></table>`
     : `<div class="empty2">ددلاینِ پیش‌رویی نیست 🎉</div>`;
@@ -366,35 +299,16 @@ function buildDash(m: ReportModel): string {
     ? `<div class="alert">⚠️ ${faDigits(m.overdue.length)} تسک از سررسیدشان گذشته‌اند!</div>`
     : "";
 
-  return page(
-    m,
-    "📊 داشبورد تسک‌ها",
-    `
-  <div class="kpis">${kpiHtml}</div>
-  ${overdueBox}
-  <div class="grid">
-    <div class="panel">
-      <h2>توزیع وضعیت</h2>
-      <div class="donutwrap">${donutSvg(m)}<ul class="legend">${legend}</ul></div>
-    </div>
-    <div class="panel">
-      <h2>${bars.title}</h2>
-      ${bars.body}
-    </div>
-  </div>
-  <div class="panel">
-    <h2>⏰ نزدیک‌ترین ددلاین‌ها</h2>
-    ${nearestHtml}
-  </div>
-  <style>
+  return {
+    css: `
     .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:var(--sp-1);margin-bottom:var(--sp-2)}
     .kpi{border:1px solid var(--line);border-radius:var(--r-m);padding:var(--sp-2);text-align:center}
     .kn{font-size:30px;font-weight:800;line-height:1.2}
     .kl{font-size:12px;color:var(--ink-2)}
     .alert{border:1px solid var(--c-over);color:var(--c-over);border-radius:var(--r-m);padding:10px var(--sp-2);margin-bottom:var(--sp-2);font-weight:700}
-    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:var(--sp-2);margin-bottom:var(--sp-2)}
+    .dgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:var(--sp-2);margin-bottom:var(--sp-2)}
     .panel{border:1px solid var(--line);border-radius:var(--r-m);padding:var(--sp-2)}
-    .panel h2{font-size:14px;margin-bottom:var(--sp-2)}
+    .panel h3{font-size:14px;margin-bottom:var(--sp-2)}
     .donutwrap{display:flex;align-items:center;gap:var(--sp-3);flex-wrap:wrap;justify-content:center}
     .donut{width:150px;height:150px}
     .donut .dt{font-size:26px;font-weight:800;fill:var(--ink)}
@@ -410,18 +324,135 @@ function buildDash(m: ReportModel): string {
     .bval{font-weight:700;text-align:left}
     .mini{width:100%;border-collapse:collapse;font-size:13px}
     .mini td{padding:8px 0;border-bottom:1px solid var(--line)}
-    .mini .ttl{font-weight:600}
-    .empty2{color:var(--ink-3);padding:var(--sp-2) 0}
-  </style>`
-  );
+    .mttl{font-weight:600}
+    .empty2{color:var(--ink-3);padding:var(--sp-2) 0}`,
+    html: `
+    <div class="kpis">${kpiHtml}</div>
+    ${overdueBox}
+    <div class="dgrid">
+      <div class="panel">
+        <h3>توزیع وضعیت</h3>
+        <div class="donutwrap">${donutSvg(m)}<ul class="legend">${legend}</ul></div>
+      </div>
+      <div class="panel">
+        <h3>${bars.title}</h3>
+        ${bars.html}
+      </div>
+    </div>
+    <div class="panel">
+      <h3>⏰ نزدیک‌ترین ددلاین‌ها</h3>
+      ${nearestHtml}
+    </div>`,
+  };
 }
 
 // ============================================================
-// ورودی اصلی
+// صفحه‌ی تک‌فایل با سه تب (radio + CSS، بدون JS)
 // ============================================================
 
-export function buildHtmlReport(m: ReportModel, style: ExportStyle): string {
-  if (style === "list") return buildList(m);
-  if (style === "dash") return buildDash(m);
-  return buildReport(m);
+/** توکن‌های دیزاین — تم سیاه‌وسفید؛ رنگ فقط برای داده */
+const TOKENS_CSS = `
+  :root{
+    /* تایپوگرافی و رنگ‌های خنثی */
+    --bg:#ffffff; --ink:#111111; --ink-2:#555555; --ink-3:#8a8a8a;
+    --line:#e6e6e6; --line-strong:#cfcfcf; --surface:#fafafa;
+    /* رنگ داده — فقط نمودار و نشان وضعیت */
+    --c-done:#16a34a; --c-doing:#2563eb; --c-todo:#9ca3af; --c-over:#dc2626; --c-warn:#d97706;
+    /* فاصله (پایه ۸px) */
+    --sp-1:8px; --sp-2:16px; --sp-3:24px; --sp-4:32px;
+    /* شعاع */
+    --r-s:4px; --r-m:8px; --r-l:12px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:"Vazirmatn",Tahoma,"Segoe UI",sans-serif;
+    background:var(--bg);color:var(--ink);
+    line-height:1.7;font-size:14px;
+    padding:var(--sp-3) var(--sp-2) var(--sp-4);
+  }
+  .wrap{max-width:880px;margin:0 auto}
+  h1{font-size:26px;font-weight:800;letter-spacing:-.5px;line-height:1.3}
+  .sub{color:var(--ink-2);font-size:13px;margin-top:var(--sp-1)}
+  .rule{border:0;border-top:3px solid var(--ink);margin:var(--sp-2) 0 var(--sp-3)}
+  .chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2);white-space:nowrap}
+  .chip i{width:8px;height:8px;border-radius:50%;display:inline-block}
+  .chip.done i{background:var(--c-done)} .chip.doing i{background:var(--c-doing)} .chip.todo i{background:var(--c-todo)}
+  .over{color:var(--c-over);font-weight:700}
+  footer{margin-top:var(--sp-4);text-align:center;color:var(--ink-3);font-size:12px}
+`;
+
+const FONT_CSS = `@font-face{
+    font-family:"Vazirmatn";
+    src:url(data:font/woff2;base64,${VAZIRMATN_WOFF2_B64}) format("woff2");
+    font-weight:100 900;font-style:normal;font-display:swap;
+  }`;
+
+const TABS_CSS = `
+  /* تب‌ها: input مخفی + label؛ انتخاب با :checked — بدون JS */
+  .tabs input{position:absolute;opacity:0;pointer-events:none}
+  .tabbar{display:flex;gap:var(--sp-1);border-bottom:2px solid var(--ink);flex-wrap:wrap}
+  .tabbar label{
+    padding:8px 18px;font-size:13px;font-weight:700;color:var(--ink-3);
+    cursor:pointer;border:1px solid transparent;border-bottom:0;border-radius:var(--r-m) var(--r-m) 0 0;
+    user-select:none;transition:color .15s ease-out,background .15s ease-out;
+  }
+  .tabbar label:hover{color:var(--ink)}
+  #t-list:checked ~ .tabbar label[for=t-list],
+  #t-report:checked ~ .tabbar label[for=t-report],
+  #t-dash:checked ~ .tabbar label[for=t-dash]{
+    color:var(--ink);background:var(--surface);border-color:var(--line);
+    border-bottom:2px solid var(--bg);margin-bottom:-2px;
+  }
+  .panels>section{display:none;padding-top:var(--sp-3)}
+  #t-list:checked ~ .panels .p-list{display:block}
+  #t-report:checked ~ .panels .p-report{display:block}
+  #t-dash:checked ~ .panels .p-dash{display:block}
+  @media print{
+    body{padding:0}
+    .tabbar label{display:none}
+    .panels>section{display:none}
+    #t-list:checked ~ .panels .p-list,
+    #t-report:checked ~ .panels .p-report,
+    #t-dash:checked ~ .panels .p-dash{display:block}
+  }`;
+
+export function buildHtmlReport(m: ReportModel, defaultTab: ExportStyle): string {
+  const list = renderList(m);
+  const report = renderReport(m);
+  const dash = renderDash(m);
+  const tab = (id: ExportStyle) => (id === defaultTab ? " checked" : "");
+  return `<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>گزارش تسک‌ها — ${escapeHtml(m.scopeName)}</title>
+<style>${FONT_CSS}${TOKENS_CSS}${TABS_CSS}${list.css}${report.css}${dash.css}</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>📊 گزارش تسک‌ها</h1>
+    <div class="sub">برای: <b>${escapeHtml(m.scopeName)}</b> · ${m.nowFa} · ${faDigits(m.total)} تسک</div>
+    <hr class="rule">
+  </header>
+  <div class="tabs">
+    <input type="radio" name="tab" id="t-list"${tab("list")}>
+    <input type="radio" name="tab" id="t-report"${tab("report")}>
+    <input type="radio" name="tab" id="t-dash"${tab("dash")}>
+    <nav class="tabbar">
+      <label for="t-list">📋 لیستی</label>
+      <label for="t-report">📄 گزارش</label>
+      <label for="t-dash">📊 داشبورد</label>
+    </nav>
+    <div class="panels">
+      <section class="p-list">${list.html}</section>
+      <section class="p-report">${report.html}</section>
+      <section class="p-dash">${dash.html}</section>
+    </div>
+  </div>
+  <footer>ساخته‌شده توسط احمق‌ایجنت 🤖</footer>
+</div>
+</body>
+</html>`;
 }

@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>📋 فهرست تسک‌ها — همه‌ی کاربرها</title>
+<style>
+  :root{
+    /* تایپوگرافی و رنگ‌های خنثی */
+    --bg:#ffffff; --ink:#111111; --ink-2:#555555; --ink-3:#8a8a8a;
+    --line:#e6e6e6; --line-strong:#cfcfcf; --surface:#fafafa;
+    /* رنگ داده — فقط نمودار و نشان وضعیت */
+    --c-done:#16a34a; --c-doing:#2563eb; --c-todo:#9ca3af; --c-over:#dc2626; --c-warn:#d97706;
+    /* فاصله (پایه ۸px) */
+    --sp-1:8px; --sp-2:16px; --sp-3:24px; --sp-4:32px; --sp-5:48px;
+    /* شعاع */
+    --r-s:4px; --r-m:8px; --r-l:12px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:"Vazirmatn","Vazir",Tahoma,"Segoe UI",sans-serif;
+    background:var(--bg);color:var(--ink);
+    line-height:1.7;font-size:14px;
+    padding:var(--sp-3) var(--sp-2) var(--sp-4);
+  }
+  .wrap{max-width:860px;margin:0 auto}
+  h1{font-size:28px;font-weight:800;letter-spacing:-.5px;line-height:1.3}
+  .sub{color:var(--ink-2);font-size:13px;margin-top:var(--sp-1)}
+  .rule{border:0;border-top:3px solid var(--ink);margin:var(--sp-2) 0 var(--sp-3)}
+  .chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2);white-space:nowrap}
+  .chip i{width:8px;height:8px;border-radius:50%;display:inline-block}
+  .chip.done i{background:var(--c-done)} .chip.doing i{background:var(--c-doing)} .chip.todo i{background:var(--c-todo)}
+  .over{color:var(--c-over);font-weight:700}
+  footer{margin-top:var(--sp-4);text-align:center;color:var(--ink-3);font-size:12px}
+  @media print{body{padding:0}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>📋 فهرست تسک‌ها</h1>
+    <div class="sub">برای: <b>همه‌ی کاربرها</b> · ۳۱ شهریور ۱۴۰۵ — ۱۳:۲۱ · ۶ تسک</div>
+    <hr class="rule">
+  </header>
+  
+  <div class="tblwrap">
+  <table>
+    <thead><tr><th>شناسه</th><th>عنوان</th><th>وضعیت</th><th>شروع</th><th>پایان</th><th>مسئول</th></tr></thead>
+    <tbody><tr><td class="num">۵۴</td><td class="ttl">طراحی لندینگ پیچ برای سایت HOMA<div class="desc">پنج بخش + فرم تماس</div></td><td><span class="chip doing"><i></i>در حال انجام</span></td><td>۳۱ شهریور ۱۴۰۵</td><td class="">۲ مهر ۱۴۰۵ — ۱۸:۰۰</td><td>ایمان</td></tr>
+<tr><td class="num">۵۵</td><td class="ttl">تماس با مشتری درباره‌ی فاکتور</td><td><span class="chip todo"><i></i>شروع‌نشده</span></td><td>۳۱ شهریور ۱۴۰۵</td><td class="">۲ مهر ۱۴۰۵ — ۱۲:۰۰</td><td>ایمان</td></tr>
+<tr><td class="num">۵۶</td><td class="ttl">بازبینی کد شاخه feature/auth</td><td><span class="chip doing"><i></i>در حال انجام</span></td><td>۳۱ شهریور ۱۴۰۵</td><td class="">۲ مهر ۱۴۰۵ — ۱۶:۳۰</td><td>سارینا</td></tr>
+<tr><td class="num">۵۷</td><td class="ttl">خرید نان 😄</td><td><span class="chip done"><i></i>تمام‌شده</span></td><td>۳۱ شهریور ۱۴۰۵</td><td class="">۳۰ شهریور ۱۴۰۵</td><td>ایمان</td></tr>
+<tr><td class="num">۵۸</td><td class="ttl">تهیه‌ی گزارش فروش مهر</td><td><span class="chip todo"><i></i>شروع‌نشده</span></td><td>۳۱ شهریور ۱۴۰۵</td><td class="over">۲ مهر ۱۴۰۵ — ۰۹:۰۰</td><td>ممد</td></tr>
+<tr><td class="num">۵۹</td><td class="ttl">آپدیت سرور به نسخه‌ی جدید</td><td><span class="chip done"><i></i>تمام‌شده</span></td><td>۳۱ شهریور ۱۴۰۵</td><td class="">۳۱ شهریور ۱۴۰۵</td><td>سارینا</td></tr></tbody>
+  </table>
+  </div>
+  <style>
+    .tblwrap{overflow-x:auto}
+    table{width:100%;border-collapse:collapse;font-size:13px}
+    th{font-size:12px;color:var(--ink-2);text-align:right;padding:var(--sp-1);border-bottom:2px solid var(--ink)}
+    td{padding:10px var(--sp-1);border-bottom:1px solid var(--line);vertical-align:top}
+    tbody tr:hover{background:var(--surface)}
+    .num{color:var(--ink-3);font-size:12px;white-space:nowrap}
+    .ttl{font-weight:600;min-width:200px}
+    .desc{color:var(--ink-3);font-size:12px;font-weight:400;margin-top:2px}
+    .empty{padding:var(--sp-4);text-align:center;color:var(--ink-3)}
+  </style>
+  <footer>ساخته‌شده توسط احمق‌ایجنت 🤖</footer>
+</div>
+</body>
+</html>

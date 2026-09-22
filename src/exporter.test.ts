@@ -37,51 +37,49 @@ const tasks = [
   task({ id: 46, status: "in_progress", title: "تماس با مشتری", assignee_id: 2 }),
 ];
 
-describe("گزارش HTML — سه شکل", () => {
-  const TITLES: Record<ExportStyle, string> = {
-    list: "فهرست تسک‌ها",
-    report: "گزارش تسک‌ها",
-    dash: "داشبورد تسک‌ها",
-  };
-  for (const style of ["list", "report", "dash"] as ExportStyle[]) {
-    it(`شکل ${style}: سند کامل RTL با توکن‌های CSS و بدون اسکریپت`, () => {
-      const m = buildReportModel(tasks, "Iman");
-      const html = buildHtmlReport(m, style);
-      expect(html).toContain("<!DOCTYPE html>");
-      expect(html).toContain('dir="rtl"');
-      expect(html).toContain("--ink:"); // توکن‌های دیزاین
-      expect(html).not.toContain("<script"); // امن: بدون اسکریپت
-      expect(html).toContain(TITLES[style]);
-      expect(html).toContain("احمق‌ایجنت");
-      if (style !== "dash") {
-        expect(html).toContain("لندینگ پیج رو درست کن");
-        expect(html).toContain("خرید نان");
-      }
-    });
-  }
+describe("گزارش HTML — تک‌فایل با سه تب", () => {
+  it("سه تب (radio + label) و هر سه بخش داخل یک فایل — بدون اسکریپت", () => {
+    const m = buildReportModel(tasks, "Iman");
+    const html = buildHtmlReport(m, "list");
+    expect(html).toContain("<!DOCTYPE html>");
+    expect(html).toContain('dir="rtl"');
+    expect(html).toContain("--ink:"); // توکن‌های دیزاین
+    expect(html).not.toContain("<script"); // تب‌ها با CSS خالص
+    // سه تب
+    for (const id of ["t-list", "t-report", "t-dash"]) {
+      expect(html).toContain(`id="${id}"`);
+      expect(html).toContain(`for="${id}"`);
+    }
+    // و محتوای هر سه شکل در همان فایل
+    expect(html).toContain("<table"); // لیستی
+    expect(html).toContain("جمع‌بندی"); // گزارش‌طور
+    expect(html).toContain("<svg"); // داشبورد
+    expect(html).toContain("لندینگ پیج رو درست کن");
+    expect(html).toContain("خرید نان");
+    expect(html).toContain("احمق‌ایجنت");
+  });
+  it("تبِ پیش‌فرض از پارامتر style می‌آید", () => {
+    const m = buildReportModel(tasks, "Iman");
+    expect(buildHtmlReport(m, "dash")).toContain('id="t-dash" checked');
+    expect(buildHtmlReport(m, "report")).toContain('id="t-report" checked');
+    expect(buildHtmlReport(m, "list")).toContain('id="t-list" checked');
+  });
+  it("فونت Vazirmatn embed شده (data:font، بدون CDN)", () => {
+    const html = buildHtmlReport(buildReportModel(tasks, "Iman"), "list");
+    expect(html).toContain("@font-face");
+    expect(html).toContain("data:font/woff2;base64,");
+    expect(html).not.toContain("http://"); // هیچ منبع خارجی
+    expect(html).not.toContain("https://"); // هیچ منبع خارجی
+  });
   it("STYLE_LABEL برای دکمه‌ها موجود است", () => {
     expect(STYLE_LABEL.list).toContain("لیستی");
     expect(STYLE_LABEL.report).toContain("گزارش");
     expect(STYLE_LABEL.dash).toContain("داشبورد");
   });
 
-  it("لیستی: جدول واقعی با ستون وضعیت", () => {
-    const html = buildHtmlReport(buildReportModel(tasks, "Iman"), "list");
-    expect(html).toContain("<table");
-    expect(html).toContain("<th>وضعیت</th>");
-    expect(html).toContain("تمام‌شده");
-  });
-
-  it("گزارش‌طور: بخش‌ها و شماره‌گذاری", () => {
-    const html = buildHtmlReport(buildReportModel(tasks, "Iman"), "report");
-    expect(html).toContain("در حال انجام");
-    expect(html).toContain("جمع‌بندی");
-  });
-
-  it("داشبورد: KPI + نمودار SVG رنگی", () => {
+  it("داشبورد: KPI + دونات + نزدیک‌ترین ددلاین‌ها", () => {
     const html = buildHtmlReport(buildReportModel(tasks, "Iman"), "dash");
-    expect(html).toContain("<svg");
-    expect(html).toContain("stroke-dasharray"); // دونات
+    expect(html).toContain("stroke-dasharray"); // دونات SVG
     expect(html).toContain("--c-doing"); // رنگ داده در توکن‌ها
     expect(html).toContain("نزدیک‌ترین ددلاین");
   });

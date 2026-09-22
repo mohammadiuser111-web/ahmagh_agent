@@ -3,7 +3,7 @@
  * مشخصات ادمین از سیکرت‌های ورکر می‌آید (ADMIN_USERNAME / ADMIN_PASSWORD).
  */
 import type { Env } from "./types";
-import { findUserByLogin, getUser, setUserCredentials } from "./db";
+import { findUserByLogin, getUser, promoteAdmin, setAlias, setUserCredentials } from "./db";
 import { escapeHtml, sendMessage } from "./telegram";
 import { setUserRole } from "./db";
 
@@ -38,31 +38,39 @@ export async function cmdRegister(env: Env, msg: any, arg: string): Promise<void
   }
 
   const lower = username.toLowerCase();
+  const adminUser = (env.ADMIN_USERNAME || "admin").toLowerCase();
+  const adminPass = env.ADMIN_PASSWORD || "";
+
+  // 👑 ادمین: admin/1234 — چند ادمین مجاز است؛ نام «admin» را هیچ‌کس تصاحب نمی‌کند
+  if (lower === adminUser) {
+    if (!adminPass || password !== adminPass) {
+      await sendMessage(env, msg.chat.id, "❌ رمز عبور برای این نام کاربری درست نیست.");
+      return;
+    }
+    const hash = await sha256Hex(password);
+    await promoteAdmin(env, msg.from.id, hash);
+    if (alias) await setAlias(env, msg.from.id, alias);
+    await sendMessage(
+      env,
+      msg.chat.id,
+      "👑 <b>ثبت‌نام ادمین انجام شد!</b>\nحالا می‌تونی برای خودت و بقیه‌ی کاربرها تسک بسازی." +
+        (alias ? `\n🎭 اسم مستعارت: <b>${escapeHtml(alias)}</b>` : "")
+    );
+    return;
+  }
+
   const existing = await findUserByLogin(env, lower);
   if (existing && existing.user_id !== msg.from.id) {
     await sendMessage(env, msg.chat.id, "❌ این نام کاربری قبلاً گرفته شده. یکی دیگه انتخاب کن.");
     return;
   }
 
-  const adminUser = (env.ADMIN_USERNAME || "admin").toLowerCase();
-  const adminPass = env.ADMIN_PASSWORD || "";
-  let role = "user";
-  if (lower === adminUser) {
-    if (!adminPass || password !== adminPass) {
-      await sendMessage(env, msg.chat.id, "❌ رمز عبور برای این نام کاربری درست نیست.");
-      return;
-    }
-    role = "admin";
-  }
-
   const hash = await sha256Hex(password);
-  await setUserCredentials(env, msg.from.id, username, hash, role, alias);
+  await setUserCredentials(env, msg.from.id, username, hash, "user", alias);
   await sendMessage(
     env,
     msg.chat.id,
-    (role === "admin"
-      ? "👑 <b>ثبت‌نام ادمین انجام شد!</b>\nحالا می‌تونی برای خودت و بقیه‌ی کاربرها تسک بسازی."
-      : "👤 ثبت‌نام شدی (<b>کاربر عادی</b>).\nبرای خودت تسک بساز، لیست کن و خروجی بگیر!") +
+    "👤 ثبت‌نام شدی (<b>کاربر عادی</b>).\nبرای خودت تسک بساز، لیست کن و خروجی بگیر!" +
       (alias ? `\n🎭 اسم مستعارت: <b>${escapeHtml(alias)}</b>` : "\n🎭 بعداً با /alias می‌تونی اسم مستعار بگیری.")
   );
 }
@@ -91,35 +99,27 @@ export async function completeAuth(
   if (mode === "register") {
     if (!validateAuthUsername(username)) return "❌ نام کاربری باید ۳ تا ۳۲ کاراکتر لاتین، عدد یا _ باشد. دوباره بگو:";
     if (password.length < 4) return "❌ رمز عبور باید حداقل ۴ کاراکتر باشد. دوباره بگو:";
-    const existing = await findUserByLogin(env, lower);
-    if (existing && existing.user_id !== userId) return "❌ این نام کاربری قبلاً گرفته شده. یوزرنیم دیگری بگو:";
-    let role = "user";
+    // 👑 ادمین: چند ادمین مجاز — نام «admin» تصاحب نمی‌شود
     if (lower === adminUser) {
       if (!adminPass || password !== adminPass) return "❌ رمز عبور برای این نام کاربری درست نیست. دوباره بگو:";
-      role = "admin";
+      await promoteAdmin(env, userId, hash);
+      if (alias) await setAlias(env, userId, alias);
+      return "👑 <b>ثبت‌نام ادمین انجام شد!</b>\nحالا می‌تونی برای خودت و بقیه‌ی کاربرها تسک بسازی.";
     }
+    const existing = await findUserByLogin(env, lower);
+    if (existing && existing.user_id !== userId) return "❌ این نام کاربری قبلاً گرفته شده. یوزرنیم دیگری بگو:";
     try {
-      await setUserCredentials(env, userId, username, hash, role, alias ?? null);
+      await setUserCredentials(env, userId, username, hash, "user", alias ?? null);
     } catch {
       return "❌ این نام کاربری قبلاً گرفته شده. یوزرنیم دیگری بگو:";
     }
-    return role === "admin"
-      ? "👑 <b>ثبت‌نام ادمین انجام شد!</b>\nحالا می‌تونی برای خودت و بقیه‌ی کاربرها تسک بسازی."
-      : `🎉 <b>ثبت‌نام کامل شد!</b> خوش اومدی <b>${escapeHtml(username)}</b>.\nاز همین حالا هرجور که راحتی بگو تا کارهات رو مدیریت کنم 👇`;
+    return `🎉 <b>ثبت‌نام کامل شد!</b> خوش اومدی <b>${escapeHtml(username)}</b>.\nاز همین حالا هرجور که راحتی بگو تا کارهات رو مدیریت کنم 👇`;
   }
 
   // ورود
-  // مشخصاتِ ادمین همیشه وارد می‌شود — حتی اگر هنوز هیچ ردیفی با این نام ثبت‌نشده باشد
+  // 👑 چند ادمین: هر کس admin/1234 بزند ادمین می‌شود — ثبت‌نامِ شخصی‌اش دست نمی‌خورد
   if (lower === adminUser && adminPass && password === adminPass) {
-    const owner = await findUserByLogin(env, lower);
-    if (owner && owner.user_id !== userId) {
-      return "❌ این حساب ادمین به شخص دیگری تعلق دارد. با حساب خودت وارد شو:";
-    }
-    try {
-      await setUserCredentials(env, userId, username, hash, "admin");
-    } catch {
-      return "❌ این نام کاربری قبلاً گرفته شده. دوباره بگو:";
-    }
+    await promoteAdmin(env, userId, hash);
     return "👑 <b>خوش برگشتی ادمین!</b>";
   }
   const u = await findUserByLogin(env, lower);

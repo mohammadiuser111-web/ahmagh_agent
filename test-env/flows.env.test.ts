@@ -46,12 +46,13 @@ describe("📤 خروجی و فلوهای زبانی (محیط ایزوله)", (
     expect(docs[0].filename).toMatch(/\.html$/);
   });
 
-  it("داشبورد: نمودار SVG داخل HTML می‌رسد", async () => {
+  it("داشبورد: نمودار SVG داخل HTML می‌رسد (تب پیش‌فرض: داشبورد)", async () => {
     await h.say(ALI, "احمق گزارش تسک‌هامو بده");
     await h.callback(ALI, "exp|me|0|dash");
     const docs = h.documents(ALI.id);
     expect(docs.length).toBe(1);
-    expect(docs[0].filename).toMatch(/dash\.html$/);
+    expect(docs[0].filename).toMatch(/\.html$/);
+    expect(docs[0].caption ?? "").toContain("داشبورد");
   });
 
   it("دکمه‌ی قدیمی PDF → پیام «PDF حذف شد» به‌جای فایل", async () => {
@@ -76,7 +77,8 @@ describe("📤 خروجی و فلوهای زبانی (محیط ایزوله)", (
     await h.callback(ASGHAR, `exp|usr|${ALI.id}|dash`);
     const docs = h.documents(ASGHAR.id);
     expect(docs.length).toBe(1);
-    expect(docs[0].filename).toContain("dash");
+    expect(docs[0].filename).toMatch(/\.html$/);
+    expect(docs[0].caption ?? "").toContain("علی");
   });
 
   it("ادمین: خروجیِ همه‌ی کاربرها — چندکاربره با ستون مسئول", async () => {
@@ -85,7 +87,7 @@ describe("📤 خروجی و فلوهای زبانی (محیط ایزوله)", (
     await h.callback(ASGHAR, "exp|all|0|list");
     const docs = h.documents(ASGHAR.id);
     expect(docs.length).toBe(1);
-    expect(docs[0].filename).toMatch(/all.*list\.html$/);
+    expect(docs[0].filename).toContain("all-users");
   });
 
   it("کاربر عادی نمی‌تواند خروجیِ همه را بگیرد", async () => {
