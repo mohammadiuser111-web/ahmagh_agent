@@ -117,6 +117,7 @@ const HELP = `🤖 <b>راهنمای احمق‌ایجنت</b>
 • 🔔 یادآوری دلخواه: «هر روز ساعت ۸»، «هر ۳ ساعت»، «۱ ساعت قبل از ددلاین»، «فردا ۱۰ صبح یادم بنداز»، «یادآوری نکن»
 • اسم مستعار: «برای ایمان یه تسک بساز» — اگر چند ایمان باشد، می‌پرسم کدام
 • فقط ادمین برای دیگران تسک می‌سازد؛ ادمین‌ها چند نفر می‌توانند باشند (ورود با admin/1234)
+• ✅ هر کس تسکی را که برایش ساخته‌ای انجام دهد، همان لحظه به تو خبر می‌دهم
 • گروه: با «احمق» یا منشن صدایم کن · خصوصی: بدون کلیدواژه`;
 
 const HINT = `من دستیارِ تسک‌هاتم — لازم نیست چیزی خاصی بگی، هرجور راحتی بگو:
@@ -1564,6 +1565,9 @@ async function cmdEdit(env: Env, msg: any, arg: string): Promise<void> {
     await sendMessage(env, msg.chat.id, "❌ خطا در ذخیره‌ی تغییرات.");
     return;
   }
+  if (field === "status") {
+    await notifyCounterpart(env, updated, { id: msg.from.id }, updated.status);
+  }
   const creator = await getUser(env, updated.creator_id);
   const assignee = await getUser(env, updated.assignee_id);
   await sendMessage(
@@ -2328,6 +2332,15 @@ async function notifyCounterpart(
   const other = await getUser(env, otherId);
   const changer = await getUser(env, changedBy.id);
   if (!other?.chat_id) return;
+  // 🎉 مسئولِ تسک، آن را تمام کرد → خبرِ شاد به سازنده (مثلاً ادمینی که تسک را برایش ساخته)
+  if (status === "done" && changedBy.id === task.assignee_id) {
+    await sendMessage(
+      env,
+      other.chat_id,
+      `🎉 <b>${escapeHtml(displayName(changer))}</b> تسکِ «${escapeHtml(truncate(task.title, 60))}» رو انجام داد! ✅`
+    );
+    return;
+  }
   await sendMessage(
     env,
     other.chat_id,

@@ -99,8 +99,24 @@ describe("✏️ ویرایش زبانی", () => {
     const t = h.tasks().at(-1)!;
     await h.say(ALI, "تسک کار مشترک رو تموم کن");
     expect(h.task(t.id)!.status).toBe("done");
-    // خبر به سازنده (اصغر)
-    expect(h.texts(ASGHAR.id).some((x) => x.includes("تغییر کرد"))).toBe(true);
+    // خبرِ شاد به سازنده (اصغر): «انجام داد»
+    expect(h.texts(ASGHAR.id).some((x) => x.includes("انجام داد"))).toBe(true);
+    expect(h.texts(ASGHAR.id).some((x) => x.includes("کار مشترک"))).toBe(true);
+  });
+
+  it("«/done و /edit وضعیت» هم برای سازنده‌ی ادمین پیام «انجام داد» می‌فرستند", async () => {
+    await h.say(ASGHAR, "احمق برای @ali_user یه تسک بساز: گزارش هفته، تا فردا");
+    const t1 = h.tasks().at(-1)!;
+    await h.say(ALI, `/done ${t1.id}`);
+    expect(h.task(t1.id)!.status).toBe("done");
+    expect(h.texts(ASGHAR.id).some((x) => x.includes("انجام داد"))).toBe(true);
+    // مسیر /edit با فیلد وضعیت — قبلاً خبر نمی‌داد
+    await h.say(ASGHAR, "احمق برای @ali_user یه تسک بساز: بسته‌بندی سفارش، تا شنبه");
+    const t2 = h.tasks().at(-1)!;
+    await h.say(ALI, `/edit ${t2.id} وضعیت: تمام`);
+    expect(h.task(t2.id)!.status).toBe("done");
+    const asgharTexts = h.texts(ASGHAR.id);
+    expect(asgharTexts.filter((x) => x.includes("انجام داد")).length).toBe(2);
   });
 
   it("چند تسک هم‌نام → انتخابگر → ویرایش", async () => {
