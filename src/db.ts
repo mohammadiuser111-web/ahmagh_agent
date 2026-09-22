@@ -1,7 +1,7 @@
 /**
  * لایه‌ی دیتابیس — همه‌ی کوئری‌های D1
  */
-import type { Env, PendingDraft, PendingTaskRow, ReminderSpec, TaskRow, TaskStatus, UserRow } from "./types";
+import type { Env, PendingDraft, PendingEditRow, PendingTaskRow, ReminderSpec, TaskRow, TaskStatus, UserRow } from "./types";
 
 /** ثبت/به‌روزرسانی کاربر (هر بار که حرف بزند) */
 export async function upsertUser(
@@ -242,9 +242,43 @@ export async function deletePendingTask(env: Env, userId: number): Promise<void>
 }
 
 /** پاک‌سازی پیش‌نویس‌های بی‌جواب (از داخل کرون) */
+// ============================================================
+// ویرایش در انتظار — جوابِ زبانی به «چی عوض بشه؟»
+// ============================================================
+
+export async function savePendingEdit(env: Env, userId: number, taskId: number, chatId: number): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO pending_edits (user_id, task_id, chat_id, created_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(user_id) DO UPDATE SET task_id = excluded.task_id, chat_id = excluded.chat_id, created_at = excluded.created_at`
+  )
+    .bind(userId, taskId, chatId, new Date().toISOString())
+    .run();
+}
+
+export async function getPendingEdit(env: Env, userId: number): Promise<PendingEditRow | null> {
+  return (await env.DB.prepare("SELECT * FROM pending_edits WHERE user_id = ?").bind(userId).first<PendingEditRow>()) ?? null;
+}
+
+export async function deletePendingEdit(env: Env, userId: number): Promise<void> {
+  await env.DB.prepare("DELETE FROM pending_edits WHERE user_id = ?").bind(userId).run();
+}
+
+/** حذف گروهی تسک‌های خودِ کاربر — scope: "all" یعنی بازها، "done" یعنی تموم‌شده‌ها */
+export async function deleteTasksOwnedBy(env: Env, userId: number, scope: "all" | "done"): Promise<number> {
+  const res = await env.DB.prepare(
+    scope === "done"
+      ? "DELETE FROM tasks WHERE (creator_id = ? OR assignee_id = ?) AND status = 'done'"
+      : "DELETE FROM tasks WHERE (creator_id = ? OR assignee_id = ?) AND status != 'done'"
+  )
+    .bind(userId, userId)
+    .run();
+  return res.meta.changes ?? 0;
+}
+
 export async function cleanupPendingTasks(env: Env, olderThanHours = 6): Promise<void> {
   const cutoff = new Date(Date.now() - olderThanHours * 3_600_000).toISOString();
   await env.DB.prepare("DELETE FROM pending_tasks WHERE created_at < ?").bind(cutoff).run();
+  await env.DB.prepare("DELETE FROM pending_edits WHERE created_at < ?").bind(cutoff).run();
 }
 
 /** تسک‌های «شروع‌نشده» با پرچم شروعِ خودکار که روزِ شروعشان رسیده */

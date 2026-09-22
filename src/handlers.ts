@@ -5,21 +5,26 @@ import type { Env, PendingDraft, ReminderSpec, TaskRow, TaskStatus, UserRow } fr
 import {
   assignTask,
   createTask,
+  deletePendingEdit,
   deletePendingTask,
   deleteTaskById,
+  deleteTasksOwnedBy,
   findUserByName,
   findUserByUsername,
+  getPendingEdit,
   getPendingTask,
   getTask,
   getUser,
   listTasks,
   recentUsers,
+  savePendingEdit,
   savePendingTask,
   setTaskFields,
   updateTaskStatus,
   upsertUser,
 } from "./db";
 import { extractDueDateTime, extractTask } from "./ai";
+import type { ParsedTask } from "./types";
 import { detectExportRequest, detectListRequest, detectUserTasksQuery } from "./intent";
 import { cmdRegister, cmdWhoami } from "./auth";
 import { buildHtmlReport, buildPdfReport, buildReportModel, exportKeyboard } from "./exporter";
@@ -70,8 +75,11 @@ const WELCOME = `سلام! من <b>احمق‌ایجنت</b> هستم 🤖
 
 const HELP = `🤖 <b>راهنمای احمق‌ایجنت</b>
 
-<b>ساخت تسک با زبان طبیعی:</b>
-«احمق این تسک رو ایجاد کن: تماس با مشتری، تا شنبه»
+<b>با زبان طبیعی — لازم نیست «احمق» بگی، هرجور راحتی بگو:</b>
+• «یه تسک بساز: تماس با مشتری، تا شنبه — هر روز ساعت ۵ یادم کن»
+• «تسک‌هامو نشون بده» · «کدومش به ددلاین نزدیک‌تره؟»
+• «تسک گزارش رو ویرایش کن» · «همه تسک‌هامو حذف کن»
+• «خروجی تسک‌هامو بده»
 
 <b>دستورها:</b>
 /new &lt;متن&gt; — ساخت تسک
@@ -101,15 +109,17 @@ const HELP = `🤖 <b>راهنمای احمق‌ایجنت</b>
 • اگه تاریخ شروع نگفی، امروز حساب می‌شه
 • ساعت هم می‌فهمم: «تا فردا ساعت ۱۰:۳۰ عصر» یا «تا شنبه ۱۲ ظهر»
 • با رسیدن زمان شروع، وضعیت خودکار «در حال انجام» می‌شه 🚦
-• بدون دستور هم می‌تونی بگی: «احمق تسک‌های منو لیست کن» یا «احمق یه خروجی از تسک‌هام بده»
+• در چت خصوصی بدون هیچ کلیدواژه‌ای همه‌چیز فهمیده می‌شود (در گروه: با «احمق» یا منشن)
 • فقط ادمین می‌تونه برای دیگه‌ها تسک بسازه؛ بقیه برای خودشون
 • 🔔 یادآوری داینامیک: موقع ساخت بگو چطور یادت بزنیم — «هر روز ساعت ۸ صبح»، «هر ۳ ساعت»، «۱ ساعت قبل از ددلاین»، «فردا ساعت ۱۰ یادم بنداز» یا «یادآوری نکن». با /edit هم عوض می‌شه.
 • ادمین: «تسک‌های علی چیا هستن؟» یا /menu ← 👥 کاربرها`;
 
-const HINT = `من فقط وقتی کامل بیدار می‌شم که صدام کنی «احمق» 😅
+const HINT = `من دستیارِ تسک‌هاتم — لازم نیست چیزی خاصی بگی، هرجور راحتی بگو:
 
-مثلاً:
-«احمق این تسک رو ایجاد کن: خرید نان، تا فردا»
+• «یه تسک بساز: خرید نان، تا فردا — هر روز ساعت ۵ یادم کن»
+• «تسک‌هامو نشون بده» · «کدومش نزدیک‌تره؟»
+• «تسک گزارش رو ویرایش کن» · «همه تسک‌هامو حذف کن»
+• «خروجی تسک‌هامو بده»
 
 راهنمای کامل: /help`;
 
@@ -265,32 +275,60 @@ async function onMessage(env: Env, msg: any): Promise<void> {
   }
   // دکمه‌های منو
   if (await onMenuButton(env, msg, text)) return;
-  if (TRIGGER_RE.test(text)) {
-    // نیت‌های غیر از ساخت: خروجی / لیست / کوئری کاربر (ادمین)
-    // (خروجی اول چک می‌شود: «خروجی تسک‌های منو بده» نباید به لیست یا ساخت برسد)
-    if (detectExportRequest(text)) {
-      await cmdExport(env, msg);
-      return;
-    }
-    const listMode = detectListRequest(text);
-    if (listMode) {
-      await sendTaskList(env, msg, listMode === "all" ? "all" : listMode === "done" ? "done" : "");
-      return;
-    }
-    const userQuery = detectUserTasksQuery(text);
-    if (userQuery) {
-      await cmdUserTasksQuery(env, msg, userQuery);
-      return;
-    }
-    await createTaskFromText(env, msg, text);
+  // 👂 در گروه فقط با صدازدن (احمق)؛ در چت خصوصی هر پیامی فهمیده می‌شود
+  if (!isPrivate && !TRIGGER_RE.test(text)) return;
+
+  // ۱) نیت‌های قطعی و سریع (بدون AI)
+  // (خروجی اول چک می‌شود: «خروجی تسک‌های منو بده» نباید به لیست یا ساخت برسد)
+  if (detectExportRequest(text)) {
+    await cmdExport(env, msg);
     return;
   }
-  if (isPrivate) {
-    // شاید این پیام، جوابِ سؤالِ «تاریخ پایان» یک تسک در انتظار است
-    const handled = await tryPendingDeadlineReply(env, msg, text);
-    if (handled) return;
-    await sendMessage(env, msg.chat.id, HINT);
+  const listMode = detectListRequest(text);
+  if (listMode) {
+    await sendTaskList(env, msg, listMode === "all" ? "all" : listMode === "done" ? "done" : "");
+    return;
   }
+  const userQuery = detectUserTasksQuery(text);
+  if (userQuery) {
+    await cmdUserTasksQuery(env, msg, userQuery);
+    return;
+  }
+
+  // ۲) شاید این پیام، جوابِ سؤالِ بازِ بات است («تا کی؟» / «چی عوض بشه؟»)
+  if (isPrivate && (await tryPendingDeadlineReply(env, msg, text))) return;
+  if (isPrivate && (await tryPendingEditReply(env, msg, text))) return;
+
+  // ۳) 🧠 هوش مصنوعی ابزار را انتخاب می‌کند: ساخت / حذف / ویرایش / نزدیک‌ترین / …
+  const known = await recentUsers(env);
+  const parsed = await extractTask(env, text, known);
+  switch (parsed.intent) {
+    case "create_task":
+      await createTaskFromText(env, msg, text, parsed);
+      return;
+    case "delete_tasks":
+      await cmdDeleteTasks(env, msg, parsed);
+      return;
+    case "update_task":
+      await cmdUpdateTask(env, msg, parsed);
+      return;
+    case "nearest_deadline":
+      await cmdNearestDeadline(env, msg);
+      return;
+    case "list_tasks":
+      await sendTaskList(env, msg, parsed.list_filter === "done" ? "done" : parsed.list_filter === "all" ? "all" : "");
+      return;
+    case "export_report":
+      await cmdExport(env, msg);
+      return;
+    case "user_tasks_query":
+      if (parsed.target_user) {
+        await cmdUserTasksQuery(env, msg, parsed.target_user);
+        return;
+      }
+      break;
+  }
+  await sendMessage(env, msg.chat.id, HINT);
 }
 
 async function onCommand(env: Env, msg: any, text: string): Promise<void> {
@@ -368,10 +406,11 @@ async function onCommand(env: Env, msg: any, text: string): Promise<void> {
 // فاز ۱ — ساخت تسک از زبان طبیعی («احمق این تسک رو ایجاد کن: …»)
 // ============================================================
 
-async function createTaskFromText(env: Env, msg: any, text: string): Promise<void> {
+async function createTaskFromText(env: Env, msg: any, text: string, pre?: ParsedTask): Promise<void> {
   const chatId = msg.chat.id;
   const known = await recentUsers(env);
-  const parsed = await extractTask(env, text, known);
+  // نتیجه‌ی extractTask از مسیرِ مسیریابی نیت قبلاً آمده — دوباره AI صدا نزن
+  const parsed: ParsedTask = pre && pre.intent === "create_task" ? pre : await extractTask(env, text, known);
 
   if (parsed.intent !== "create_task" || !parsed.title) {
     await sendMessage(
@@ -1090,6 +1129,38 @@ async function cmdEdit(env: Env, msg: any, arg: string): Promise<void> {
     return;
   }
 
+  const r = await resolveFieldUpdate(env, task, field, value, msg.from.id);
+  if (!r.ok) {
+    await sendMessage(env, msg.chat.id, r.error);
+    return;
+  }
+
+  const updated = await setTaskFields(env, id, r.updates);
+  if (!updated) {
+    await sendMessage(env, msg.chat.id, "❌ خطا در ذخیره‌ی تغییرات.");
+    return;
+  }
+  const creator = await getUser(env, updated.creator_id);
+  const assignee = await getUser(env, updated.assignee_id);
+  await sendMessage(
+    env,
+    msg.chat.id,
+    `✏️ ✅ ${r.note}\n\n${taskCard(updated, creator, assignee)}`,
+    { reply_markup: statusKeyboard(updated) }
+  );
+}
+
+/**
+ * منطقِ مشترکِ «فیلد + مقدار» — هم /edit استفاده می‌کند هم ویرایشِ زبانی.
+ * خروجی: {ok:true, updates, note} یا {ok:false, error}
+ */
+async function resolveFieldUpdate(
+  env: Env,
+  task: TaskRow,
+  field: string,
+  value: string,
+  editorId: number
+): Promise<{ ok: true; updates: Record<string, string | number | null>; note: string } | { ok: false; error: string }> {
   const updates: Record<string, string | number | null> = {};
   let note = "";
   const today = todayTehranISO();
@@ -1104,7 +1175,7 @@ async function cmdEdit(env: Env, msg: any, arg: string): Promise<void> {
       note = "توضیح عوض شد.";
       break;
     case "assignee": {
-      const { user, note: assignNote } = await resolveAssignee(env, value, msg.from.id);
+      const { user, note: assignNote } = await resolveAssignee(env, value, editorId);
       updates.assignee_id = user.user_id;
       note = `مسئول جدید: ${escapeHtml(displayName(user))}`;
       if (assignNote) note += `\n${assignNote}`;
@@ -1114,12 +1185,7 @@ async function cmdEdit(env: Env, msg: any, arg: string): Promise<void> {
       const dt = parseRelativeFaDateTime(value, today);
       const date = dt.date || (dt.time ? task.start_date || today : "");
       if (!date) {
-        await sendMessage(
-          env,
-          msg.chat.id,
-          "🤔 تاریخ شروع رو نفهمیدم! مثلاً: «شنبه»، «۱۵ مهر» یا «فردا ساعت ۸ صبح»."
-        );
-        return;
+        return { ok: false, error: "🤔 تاریخ شروع رو نفهمیدم! مثلاً: «شنبه»، «۱۵ مهر» یا «فردا ساعت ۸ صبح»." };
       }
       const start_at = dt.time ? `${date}T${dt.time}:00+03:30` : null;
       const future = (start_at !== null && Date.parse(start_at) > Date.now()) || date > today;
@@ -1127,19 +1193,13 @@ async function cmdEdit(env: Env, msg: any, arg: string): Promise<void> {
       updates.start_at = start_at;
       // اگر شروع هنوز نرسیده و تسک شروع‌نشده است، شروعِ خودکار دوباره مسلح می‌شود
       updates.auto_start = future && task.status === "not_started" ? 1 : 0;
-      note =
-        "زمان شروع آپدیت شد." + (future && task.status === "not_started" ? " ⏱ شروع خودکار فعال شد." : "");
+      note = "زمان شروع آپدیت شد." + (future && task.status === "not_started" ? " ⏱ شروع خودکار فعال شد." : "");
       break;
     }
     case "due": {
       const deadline = await resolveDeadlineFromText(env, value);
       if (!deadline) {
-        await sendMessage(
-          env,
-          msg.chat.id,
-          "🤔 تاریخ پایان رو نفهمیدم! مثلاً: «فردا»، «پنجشنبه»، «۱۵ مهر» یا «فردا ساعت ۵ عصر»."
-        );
-        return;
+        return { ok: false, error: "🤔 تاریخ پایان رو نفهمیدم! مثلاً: «فردا»، «پنجشنبه»، «۱۵ مهر» یا «فردا ساعت ۵ عصر»." };
       }
       updates.due_date = deadline.date;
       updates.due_at = deadline.time ? `${deadline.date}T${deadline.time}:00+03:30` : null;
@@ -1151,14 +1211,9 @@ async function cmdEdit(env: Env, msg: any, arg: string): Promise<void> {
       break;
     }
     case "status": {
-      const st = parseStatus(value);
+      const st = parseStatus(value.replace(/[\s_]/g, "-"));
       if (!st) {
-        await sendMessage(
-          env,
-          msg.chat.id,
-          "وضعیت معتبر نیست. گزینه‌ها: <i>شروع‌نشده</i> / <i>در حال انجام</i> / <i>تمام‌شده</i>"
-        );
-        return;
+        return { ok: false, error: "🤔 وضعیت رو نفهمیدم! مجازها: not_started / in_progress / done (یا معادل فارسی‌شون)" };
       }
       updates.status = st;
       if (st === "done") updates.completed_at = new Date().toISOString();
@@ -1168,14 +1223,15 @@ async function cmdEdit(env: Env, msg: any, arg: string): Promise<void> {
     }
     case "reminder": {
       // «نکن» به‌تنهایی کلمه‌ی کلیدی ندارد — فیلد را کنارش می‌گذاریم تا پارسر بفهمد
-      const spec = parseReminderSpec(/^(نکن|خاموش|خاموشش\s*کن|none|off|نباش)$/i.test(value.trim()) ? "یادآوری نکن" : value, todayTehranISO());
+      const spec = parseReminderSpec(
+        /^(نکن|خاموش|خاموشش\s*کن|none|off|نباش)$/i.test(value.trim()) ? "یادآوری نکن" : value,
+        todayTehranISO()
+      );
       if (!spec) {
-        await sendMessage(
-          env,
-          msg.chat.id,
-          "🤔 الگوی یادآوری رو نفهمیدم! مثلاً:\n• <code>/edit 12 یادآوری: هر روز ساعت ۸ صبح</code>\n• <code>/edit 12 یادآوری: هر ۳ ساعت</code>\n• <code>/edit 12 یادآوری: ۱ ساعت قبل از ددلاین</code>\n• <code>/edit 12 یادآوری: نکن</code>"
-        );
-        return;
+        return {
+          ok: false,
+          error: "🤔 الگوی یادآوری رو نفهمیدم! مثلاً:\n• هر روز ساعت ۸ صبح\n• هر ۳ ساعت\n• ۱ ساعت قبل از ددلاین\n• نکن",
+        };
       }
       updates.reminder_type = spec.type;
       updates.reminder_time = spec.time;
@@ -1196,21 +1252,207 @@ async function cmdEdit(env: Env, msg: any, arg: string): Promise<void> {
       note = `🔔 یادآوری جدید: ${rt2 ?? "خاموش"}`;
       break;
     }
+    default:
+      return { ok: false, error: EDIT_USAGE };
   }
+  return { ok: true, updates, note };
+}
 
-  const updated = await setTaskFields(env, id, updates);
+/** اعمال ویرایش زبانی + کارت نتیجه (+ خبر به طرف مقابل برای تغییر وضعیت) */
+async function applyTaskFieldEdit(env: Env, msg: any, task: TaskRow, field: string, value: string): Promise<void> {
+  const r = await resolveFieldUpdate(env, task, field, value, msg.from.id);
+  if (!r.ok) {
+    await sendMessage(env, msg.chat.id, r.error);
+    return;
+  }
+  const updated = await setTaskFields(env, task.id, r.updates);
   if (!updated) {
     await sendMessage(env, msg.chat.id, "❌ خطا در ذخیره‌ی تغییرات.");
     return;
+  }
+  if (field === "status") {
+    await notifyCounterpart(env, updated, { id: msg.from.id }, updated.status);
   }
   const creator = await getUser(env, updated.creator_id);
   const assignee = await getUser(env, updated.assignee_id);
   await sendMessage(
     env,
     msg.chat.id,
-    `✏️ ✅ ${note}\n\n${taskCard(updated, creator, assignee)}`,
+    `✏️ ✅ ${r.note}\n\n${taskCard(updated, creator, assignee)}`,
     { reply_markup: statusKeyboard(updated) }
   );
+}
+
+
+// ============================================================
+// 🗑 حذف · ✏️ ویرایش زبانی · ⏰ نزدیک‌ترین ددلاین
+// ============================================================
+
+const isMine = (t: TaskRow, userId: number) => t.creator_id === userId || t.assignee_id === userId;
+
+/** حذف — از مسیر AI یا هیوریستیک: «همه تسک‌هامو حذف کن» / «تسک گزارش رو حذف کن» */
+async function cmdDeleteTasks(env: Env, msg: any, parsed: ParsedTask): Promise<void> {
+  const ref = (parsed.task_ref || "").trim();
+  const idNum = /^\d{1,6}$/.test(enDigits(ref)) ? Number(enDigits(ref)) : null;
+
+  if (idNum || ref) {
+    let candidates: TaskRow[] = [];
+    if (idNum) {
+      const t = await getTask(env, idNum);
+      if (t && isMine(t, msg.from.id)) candidates = [t];
+    } else {
+      const rows = await listTasks(env, { involved: msg.from.id, status: "open" });
+      candidates = rows.filter((t) => t.title.includes(ref));
+    }
+    if (!candidates.length) {
+      await sendMessage(env, msg.chat.id, "🤔 تسکی با این مشخصات پیدا نکردم. با «تسک‌هامو نشون بده» لیست رو ببین.");
+      return;
+    }
+    if (candidates.length === 1) {
+      const t = candidates[0];
+      await sendMessage(env, msg.chat.id, `🗑 تسک «${escapeHtml(truncate(t.title, 60))}» رو حذف کنم؟ برنمی‌گرده!`, {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "آره، حذفش کن 🗑", callback_data: `del|${t.id}` }, { text: "نه ❌", callback_data: "noop" }],
+          ],
+        },
+      });
+      return;
+    }
+    const kb = candidates.slice(0, 10).map((t) => [{ text: `🗑 ${truncate(t.title, 30)}`, callback_data: `del|${t.id}` }]);
+    await sendMessage(env, msg.chat.id, "کدوم‌شون؟", { reply_markup: { inline_keyboard: kb } });
+    return;
+  }
+
+  // همه‌ی بازها یا فقط تموم‌شده‌ها
+  const scope = parsed.delete_scope === "done" ? "done" : "all";
+  const rows = await listTasks(env, { involved: msg.from.id, status: scope === "done" ? "done" : "open" });
+  if (!rows.length) {
+    await sendMessage(env, msg.chat.id, scope === "done" ? "تموم‌شده‌ای نداری 🎉" : "تسکِ بازی نداری که حذف کنم 🎉");
+    return;
+  }
+  await sendMessage(
+    env,
+    msg.chat.id,
+    `🗑 ${faDigits(rows.length)} تا تسک${scope === "done" ? "ِ تموم‌شده" : "ِ باز"}ت رو یکجا حذف کنم؟ این کار برنمی‌گرده!`,
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: `آره، همه‌شون رو حذف کن 🗑`, callback_data: `delq|${scope}` }, { text: "نه ❌", callback_data: "noop" }],
+        ],
+      },
+    }
+  );
+}
+
+function askEditValue(env: Env, chatId: number, task: TaskRow): Promise<void> {
+  return sendMessage(
+    env,
+    chatId,
+    `✏️ تسک «${escapeHtml(truncate(task.title, 60))}» پیدا شد. <b>چی عوض بشه؟</b> مثلاً:\n• عنوان: …\n• توضیحات: …\n• پایان: فردا ساعت ۵\n• شروع: شنبه\n• وضعیت: تموم\n• یادآوری: هر روز ساعت ۸\n• مسئول: علی\n\n(لغو: بی‌خیال)`
+  );
+}
+
+/** ویرایش — «تسک گزارش رو ویرایش کن، عنوانش بشه …» */
+async function cmdUpdateTask(env: Env, msg: any, parsed: ParsedTask): Promise<void> {
+  const ref = (parsed.task_ref || "").trim();
+  const field = normalizeEditField(parsed.update_field || "");
+  const value = (parsed.update_value || "").trim();
+  const idNum = /^\d{1,6}$/.test(enDigits(ref)) ? Number(enDigits(ref)) : null;
+
+  let candidates: TaskRow[] = [];
+  if (idNum) {
+    const t = await getTask(env, idNum);
+    if (t && isMine(t, msg.from.id)) candidates = [t];
+  } else if (ref) {
+    const rows = await listTasks(env, { involved: msg.from.id, status: "open" });
+    candidates = rows.filter((t) => t.title.includes(ref));
+  } else {
+    candidates = await listTasks(env, { involved: msg.from.id, status: "open" });
+  }
+
+  if (!candidates.length) {
+    await sendMessage(env, msg.chat.id, "🤔 تسکی برای ویرایش پیدا نکردم. اول بسازش یا لیست رو ببین: «تسک‌هامو نشون بده».");
+    return;
+  }
+  if (candidates.length > 1) {
+    const kb = candidates.slice(0, 10).map((t) => [{ text: `✏️ ${truncate(t.title, 30)}`, callback_data: `upd|${t.id}` }]);
+    await sendMessage(env, msg.chat.id, "کدوم تسک؟", { reply_markup: { inline_keyboard: kb } });
+    return;
+  }
+  const task = candidates[0];
+  if (field && value) {
+    await applyTaskFieldEdit(env, msg, task, field, value);
+    return;
+  }
+  await savePendingEdit(env, msg.from.id, task.id, msg.chat.id);
+  await askEditValue(env, msg.chat.id, task);
+}
+
+/** جوابِ زبانی کاربر به «چی عوض بشه؟» */
+async function tryPendingEditReply(env: Env, msg: any, text: string): Promise<boolean> {
+  const pe = await getPendingEdit(env, msg.from.id);
+  if (!pe) return false;
+  if (Date.now() - Date.parse(pe.created_at) > PENDING_TTL_MS) {
+    await deletePendingEdit(env, msg.from.id);
+    return false;
+  }
+  const clean = text.replace(/\u200c/g, " ").trim();
+  if (CANCEL_RE.test(clean)) {
+    await deletePendingEdit(env, msg.from.id);
+    await sendMessage(env, msg.chat.id, "👌 باشه، ویرایش بی‌خیال.");
+    return true;
+  }
+  const task = await getTask(env, pe.task_id);
+  if (!task || !isMine(task, msg.from.id)) {
+    await deletePendingEdit(env, msg.from.id);
+    await sendMessage(env, msg.chat.id, "این تسک دیگه در دسترس نیست.");
+    return true;
+  }
+  // «فیلد: مقدار» یا «فیلد مقدار»
+  const colon = clean.search(/[:：]/);
+  let fieldRaw: string;
+  let value: string;
+  if (colon >= 0) {
+    fieldRaw = clean.slice(0, colon);
+    value = clean.slice(colon + 1).trim();
+  } else {
+    const vp = clean.split(/\s+/);
+    fieldRaw = vp[0] || "";
+    value = vp.slice(1).join(" ");
+  }
+  const field = normalizeEditField(fieldRaw);
+  if (!field || !value) {
+    await sendMessage(
+      env,
+      msg.chat.id,
+      "🤔 نفهمیدم! اینجوری بگو: «عنوان: گزارش جدید» یا «یادآوری: هر روز ساعت ۸»\n(لغو: بی‌خیال)"
+    );
+    return true;
+  }
+  await deletePendingEdit(env, msg.from.id);
+  await applyTaskFieldEdit(env, msg, task, field, value);
+  return true;
+}
+
+/** ⏰ «کدوم تسکم به ددلاین نزدیک‌تره؟» */
+async function cmdNearestDeadline(env: Env, msg: any): Promise<void> {
+  const rows = (await listTasks(env, { involved: msg.from.id, status: "open" })).sort(byNearestDeadline);
+  if (!rows.length) {
+    await sendMessage(env, msg.chat.id, "تسکِ بازی نداری 🎉");
+    return;
+  }
+  const lines = rows.slice(0, 3).map((t, i) => {
+    const dueMs = t.due_at ? Date.parse(t.due_at) : t.due_date ? endOfDayMs(t.due_date) : Infinity;
+    const left = dueMs === Infinity ? "بدون ددلاین" : humanizeFa(dueMs);
+    const when = t.due_date
+      ? ` (${fmtDate(t.due_date)}${t.due_at ? ` ساعت ${faDigits(t.due_at.slice(11, 16))}` : ""})`
+      : "";
+    const name = `«${escapeHtml(truncate(t.title, 40))}» — ${left}${when}`;
+    return i === 0 ? `⏰ <b>${name}</b>` : `• ${name}`;
+  });
+  const more = rows.length > 3 ? `\n\nو ${faDigits(rows.length - 3)} تسک دیگر…` : "";
+  await sendMessage(env, msg.chat.id, `⏰ <b>نزدیک‌ترین ددلاین‌های تو:</b>\n\n${lines.join("\n")}${more}`);
 }
 
 // ============================================================
@@ -1282,6 +1524,49 @@ async function onCallbackQuery(env: Env, cq: any): Promise<void> {
         );
       }
     }
+    return;
+  }
+
+  // 🗑 حذف تک‌تسک: del|<taskId>
+  if (parts[0] === "del" && parts.length === 2) {
+    const task = await getTask(env, Number(enDigits(parts[1])));
+    if (!task) {
+      await answerCallbackQuery(env, cq.id, "این تسک حذف شده ❌");
+      return;
+    }
+    if (!isMine(task, from.id)) {
+      await answerCallbackQuery(env, cq.id, "این تسک مال تو نیست 😐");
+      return;
+    }
+    await deleteTaskById(env, task.id);
+    await answerCallbackQuery(env, cq.id, "🗑 حذف شد");
+    await sendMessage(env, msg.chat.id, `🗑 تسک «${escapeHtml(truncate(task.title, 60))}» حذف شد.`);
+    return;
+  }
+
+  // 🗑 حذف گروهی: delq|<all|done>
+  if (parts[0] === "delq" && parts.length === 2) {
+    const scope = parts[1] === "done" ? "done" : "all";
+    const n = await deleteTasksOwnedBy(env, from.id, scope);
+    await answerCallbackQuery(env, cq.id, "🗑 حذف شد");
+    await sendMessage(env, msg.chat.id, `🗑 ${faDigits(n)} تسک حذف شد${scope === "done" ? " (تموم‌شده‌ها)" : ""}.`);
+    return;
+  }
+
+  // ✏️ انتخاب تسک برای ویرایش زبانی: upd|<taskId>
+  if (parts[0] === "upd" && parts.length === 2) {
+    const task = await getTask(env, Number(enDigits(parts[1])));
+    if (!task) {
+      await answerCallbackQuery(env, cq.id, "این تسک حذف شده ❌");
+      return;
+    }
+    if (!isMine(task, from.id)) {
+      await answerCallbackQuery(env, cq.id, "این تسک مال تو نیست 😐");
+      return;
+    }
+    await answerCallbackQuery(env, cq.id, "⏳");
+    await savePendingEdit(env, from.id, task.id, msg.chat.id);
+    await askEditValue(env, msg.chat.id, task);
     return;
   }
 

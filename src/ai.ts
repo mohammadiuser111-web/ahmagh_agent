@@ -4,7 +4,7 @@
  * فالبک ۱: مدل جایگزین (AI_FALLBACK_MODEL) — فالبک ۲: پارسر هیوریستیک بدون AI
  */
 import type { Env, ParsedTask, TaskStatus } from "./types";
-import { addDaysISO, parseRelativeFaDateTime, todayJalaliFa, todayTehranISO } from "./dates";
+import { addDaysISO, enDigits, parseRelativeFaDateTime, todayJalaliFa, todayTehranISO } from "./dates";
 
 const DEFAULT_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 const DEFAULT_FALLBACK_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
@@ -13,7 +13,10 @@ const DEFAULT_FALLBACK_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 const TASK_JSON_SCHEMA = {
   type: "object",
   properties: {
-    intent: { type: "string", enum: ["create_task", "other"] },
+    intent: {
+      type: "string",
+      enum: ["create_task", "delete_tasks", "update_task", "nearest_deadline", "list_tasks", "export_report", "user_tasks_query", "other"],
+    },
     title: { type: "string" },
     description: { type: "string" },
     assignee: { type: "string" },
@@ -27,12 +30,19 @@ const TASK_JSON_SCHEMA = {
     reminder_time: { type: "string" },
     reminder_hours: { type: "number" },
     status: { type: "string", enum: ["not_started", "in_progress", "done"] },
+    delete_scope: { type: "string", enum: ["", "all", "done"] },
+    task_ref: { type: "string" },
+    update_field: { type: "string", enum: ["", "title", "description", "assignee", "start", "due", "status", "reminder"] },
+    update_value: { type: "string" },
+    target_user: { type: "string" },
+    list_filter: { type: "string", enum: ["", "open", "done", "all"] },
   },
   required: [
     "intent", "title", "description", "assignee",
     "start_date", "start_time", "start_phrase",
     "due_date", "due_time", "due_phrase",
     "reminder_kind", "reminder_time", "reminder_hours", "status",
+    "delete_scope", "task_ref", "update_field", "update_value", "target_user", "list_filter",
   ],
   additionalProperties: false,
 } as const;
@@ -61,8 +71,19 @@ function systemPrompt(today: string, todayJalali: string, knownUsers: string): s
     "",
     "Extract the task and answer ONLY with JSON matching the schema.",
     "",
-    "FIELD RULES:",
-    '- intent: "create_task" only if the user clearly wants a task created/recorded. For requests to LIST, SHOW, EXPORT, DELETE, or ASK ABOUT tasks, use "other" (the bot handles those separately).',
+    "CLASSIFY THE REQUEST FIRST (intent):",
+    '- "create_task" — the user clearly wants a task created/recorded.',
+    "- \"delete_tasks\" — remove tasks: «تسک‌هامو حذف کن», «همه‌ی تسک‌ها رو پاک کن», «تسک گزارش رو حذف کن».",
+    '  • delete_scope: "all" = ALL of the speaker\'s open tasks; "done" = only finished ones; "" = one specific task (put its id or a title fragment in task_ref).',
+    "- \"update_task\" — change an existing task: «تسک لندینگ رو ویرایش کن», «عنوانش بشه گزارش نهایی», «تسک ۵ رو تموم کن», «یادآوری تسک گزارش رو هر روز ساعت ۸ کن».",
+    '  • task_ref = the task id or a distinctive title fragment. If the user says WHAT to change: update_field is one of title|description|assignee|start|due|status|reminder and update_value is the new value VERBATIM in Persian (keep dates/numbers as written).',
+    '- "nearest_deadline" — «کدوم تسکم به ددلاین نزدیک‌تره؟», «چی زودتر باید تموم شه؟».',
+    '- "list_tasks" — show the speaker\'s own tasks: «تسک‌هامو نشون بده», «لیست کارهام», «تموم‌شده‌هامو بگو» (list_filter: open|done|all).',
+    '- "export_report" — «خروجی/گزارش/تاریخچه‌ی تسک‌هامو بده».',
+    '- "user_tasks_query" — asking about ANOTHER user\'s tasks: «تسک‌های علی چیا هستن؟» → target_user = that name/@username. For the speaker\'s OWN tasks always use list_tasks.',
+    '- "other" — greetings, smalltalk, or anything not covered.',
+    "",
+    "FIELD RULES (for create_task):",
     "- title: short imperative task title (max ~90 chars), same language as the task text. Never include insults, meta phrases, dates, or reminder words.",
     '- description: leftover useful details, or "".',
     '- assignee: who must DO the task — a @username (without @) or a first name exactly as written. If it refers to the speaker (من/خودم) or nobody else is mentioned, use "".',
@@ -85,7 +106,12 @@ function systemPrompt(today: string, todayJalali: string, knownUsers: string): s
     "EXAMPLES:",
     '«احمق یه تسک بساز: خرید نان، تا فردا» → {"intent":"create_task","title":"خرید نان","description":"","assignee":"","start_date":"","start_time":"","start_phrase":"","due_date":"' + addDaysISO(today, 1) + '","due_time":"","due_phrase":"تا فردا","reminder_kind":"","reminder_time":"","reminder_hours":0,"status":"not_started"}',
     '«احمق برای علی یه تسک بساز که فردا تا ساعت ۱۰ شب باید لندینگ بزنه، هر روز ساعت ۸ صبح یادش باشه» → {"intent":"create_task","title":"لندینگ بزن","description":"","assignee":"علی","start_date":"","start_time":"","start_phrase":"","due_date":"' + addDaysISO(today, 1) + '","due_time":"22:00","due_phrase":"فردا تا ساعت ۱۰ شب","reminder_kind":"daily","reminder_time":"08:00","reminder_hours":0,"status":"not_started"}',
-    '«احمق تسک‌های منو لیست کن» → {"intent":"other", ...} (not a task creation!)',
+    '«احمق تمام تسک های منو حذف کن» → {"intent":"delete_tasks","delete_scope":"all","task_ref":""} (other fields empty)',
+    '«احمق تسک گزارش رو ویرایش کن، عنوانش بشه گزارش نهایی» → {"intent":"update_task","task_ref":"گزارش","update_field":"title","update_value":"گزارش نهایی"}',
+    '«احمق تسک ۵ رو تموم کن» → {"intent":"update_task","task_ref":"5","update_field":"status","update_value":"تموم"}',
+    '«احمق کدوم از تسک هام به ددلاین نزدیک تره؟» → {"intent":"nearest_deadline"}',
+    '«احمق تسک‌های منو لیست کن» → {"intent":"list_tasks","list_filter":"open"}',
+    '«سلام، حالت چطوره؟» → {"intent":"other"}',
   ].join("\n");
 }
 
@@ -235,8 +261,10 @@ function isTimeStr(v: string): boolean {
   return /^([01]\d|2[0-3]):[0-5]\d$/.test(v);
 }
 
+const ALL_INTENTS = ["create_task", "delete_tasks", "update_task", "nearest_deadline", "list_tasks", "export_report", "user_tasks_query", "other"] as const;
+
 function normalize(j: any, originalText: string): ParsedTask {
-  const intent: ParsedTask["intent"] = j?.intent === "other" ? "other" : "create_task";
+  const intent: ParsedTask["intent"] = ALL_INTENTS.includes(j?.intent) ? j.intent : j?.title ? "create_task" : "other";
   const title = str(j?.title).trim().slice(0, 120);
   const description = str(j?.description).trim().slice(0, 2000);
   let assignee_name = str(j?.assignee).trim().slice(0, 64);
@@ -255,13 +283,89 @@ function normalize(j: any, originalText: string): ParsedTask {
   const reminder_kind = (R_KINDS.includes(str(j?.reminder_kind)) ? str(j?.reminder_kind) : "") as ParsedTask["reminder_kind"];
   const reminder_time = isTimeStr(str(j?.reminder_time)) ? str(j?.reminder_time) : "";
   const reminder_hours = typeof j?.reminder_hours === "number" && j.reminder_hours > 0 && j.reminder_hours <= 336 ? j.reminder_hours : 0;
-  if (!title) return heuristicParse(originalText);
-  return { intent, title, description, assignee_name, start_date, start_time, start_phrase, due_date, due_time, due_phrase, reminder_kind, reminder_time, reminder_hours, reminder_date: "", status };
+  const SCOPES = ["", "all", "done"];
+  const FILTERS = ["", "open", "done", "all"];
+  const FIELDS = ["", "title", "description", "assignee", "start", "due", "status", "reminder"];
+  const out: ParsedTask = {
+    intent, title, description, assignee_name, start_date, start_time, start_phrase, due_date, due_time, due_phrase,
+    reminder_kind, reminder_time, reminder_hours, reminder_date: "", status,
+    delete_scope: (SCOPES.includes(str(j?.delete_scope)) ? str(j?.delete_scope) : "") as ParsedTask["delete_scope"],
+    task_ref: str(j?.task_ref).trim().slice(0, 60),
+    update_field: (FIELDS.includes(str(j?.update_field)) ? str(j?.update_field) : ""),
+    update_value: str(j?.update_value).trim().slice(0, 200),
+    target_user: str(j?.target_user).trim().slice(0, 40),
+    list_filter: (FILTERS.includes(str(j?.list_filter)) ? str(j?.list_filter) : "") as ParsedTask["list_filter"],
+  };
+  if (!out.title && out.intent === "create_task") return heuristicParse(originalText);
+  return out;
 }
 
 /** فالبک بدون AI: جدا کردن عنوان/توضیحات و تشخیص ساده‌ی تاریخ و ساعت‌های رایج فارسی */
+const H_BASE: ParsedTask = {
+  intent: "other", title: "", description: "", assignee_name: "",
+  start_date: "", start_time: "", start_phrase: "", due_date: "", due_time: "", due_phrase: "",
+  reminder_kind: "", reminder_time: "", reminder_hours: 0, reminder_date: "", status: "not_started",
+  delete_scope: "", task_ref: "", update_field: "", update_value: "", target_user: "", list_filter: "",
+};
+
+/** «تسک X رو…» → X (نه ضمیر، نه حرف اضافه) */
+function extractTaskRef(t: string): string {
+  const m = t.match(/(?:تسک|تاسک|کار)\s+(?:های\s+)?(?:همه\s+|همرو\s+|تمام\s+)?([^،,\s]+)/);
+  if (!m) return "";
+  const ref = m[1].replace(/\u200c/g, "").replace(/(رو|را)$/, "");
+  const STOP = /^(من|منو|خودم|خودمم|های|هایم|هام|هامو|مون|م|شون|همه|همرو|تمام|کل|تسک|تاسک|تسکها|کارها|کارام|کارای)$/i;
+  return STOP.test(ref) ? "" : ref;
+}
+
+const UPDATE_FIELD_FA: Record<string, string> = {
+  عنوان: "title", توضیح: "description", توضیحات: "description",
+  مسئول: "assignee", شروع: "start", پایان: "due", سررسید: "due", ددلاین: "due",
+  وضعیت: "status", یادآوری: "reminder", یاداوری: "reminder",
+};
+
 export function heuristicParse(text: string): ParsedTask {
   let t = text.replace(/احمق/g, " ");
+  const hasTaskWord = /تسک|تاسک|کار/.test(t);
+  const createVerb = /بساز|ایجاد|ساخت|ثبت|یادداشت|نوت/.test(t);
+
+  // ۱) اولویت با فعلِ ساخت است: «یه تسک بساز: ویرایش سایت» یعنی ساخت، نه ویرایش!
+  if (!createVerb) {
+    // 🗑 حذف
+    if (/(?:حذف|پاک)(?:ش|شون|شو)?\s*(?:کنند|کنید|کنم|کن)/.test(t) && hasTaskWord) {
+      const doneScope = /تموم|انجام\s*شده|پایان\s*یافته/.test(t);
+      const idm = t.match(/(?:تسک|تاسک|کار|شماره)\s*(\d{1,4})/);
+      if (idm) return { ...H_BASE, intent: "delete_tasks", task_ref: String(Number(enDigits(idm[1]))) };
+      let ref = extractTaskRef(t);
+      let scope: "all" | "done" | "" = doneScope ? "done" : "all";
+      if (/^(تموم|تمام|انجام)/.test(ref)) { ref = ""; scope = "done"; }
+      if (ref) scope = "";
+      return { ...H_BASE, intent: "delete_tasks", delete_scope: scope, task_ref: ref };
+    }
+    // ✏️ ویرایش / تغییر وضعیت
+    if (/ویرایش|آپدیت|اپدیت|تغییر\s*بده|عوض\s*کن|تموم\s*(?:ش\s*)?کن|تمومش\s*کن|انجامش?\s*دادم|تمومش?\s*کردم/.test(t) && hasTaskWord) {
+      const idm = t.match(/(?:تسک|تاسک|کار|شماره)\s*(\d{1,4})/);
+      const task_ref = idm ? String(Number(enDigits(idm[1]))) : extractTaskRef(t);
+      const fm = t.match(
+        /(عنوان|توضیحات?|مسئول|شروع|پایان|سررسید|ددلاین|وضعیت|یادآوری|یاداوری)\S*\s*(?:ش|شو|مون)?\s*(?:بشه|شود|بذار|بزار|کن|گردد)\s*[:،]?\s*(.+)/
+      );
+      if (fm) {
+        const field = UPDATE_FIELD_FA[fm[1]] ?? "";
+        return { ...H_BASE, intent: "update_task", task_ref, update_field: field, update_value: fm[2].trim() };
+      }
+      if (/تموم|انجام/.test(t)) return { ...H_BASE, intent: "update_task", task_ref, update_field: "status", update_value: "تموم" };
+      return { ...H_BASE, intent: "update_task", task_ref };
+    }
+    // ⏰ نزدیک‌ترین ددلاین
+    if (/نزدیک/.test(t) && /ددلاین|سررسید|تموم/.test(t)) return { ...H_BASE, intent: "nearest_deadline" };
+    // 📤 خروجی / 📋 لیست (پشتیبانِ مسیر قطعی)
+    if (/خروجی|گزارش|تاریخچه/.test(t) && hasTaskWord) return { ...H_BASE, intent: "export_report" };
+    if (hasTaskWord && /نشون|نمایش|لیست|چیا/.test(t)) return { ...H_BASE, intent: "list_tasks", list_filter: /تموم/.test(t) ? "done" : "open" };
+  }
+
+  // ۲) مسیر ساخت (موجود)
+  const createSignal = createVerb || /(?:^|\s)(?:تا|سررسید)\s/.test(t) || /تسک|تاسک/.test(t);
+  if (!createSignal) return { ...H_BASE };
+
   t = t.replace(
     /(این|یه)?\s*(تسک|تسکی|تاسک)\s*(رو|را)?\s*(برای\s*من)?\s*(ایجاد\s*کن|ایجاد\s*کنید|بساز|بسازید|ساخت\s*کن|بسازه)/g,
     " "
@@ -288,6 +392,7 @@ export function heuristicParse(text: string): ParsedTask {
     .replace(/^[\s،؛:.,\-]+|[\s،؛:.,\-]+$/g, "")
     .slice(0, 1000);
   return {
+    ...H_BASE,
     intent: "create_task",
     title,
     description,

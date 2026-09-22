@@ -94,9 +94,25 @@ export interface PendingTaskRow {
   created_at: string;
 }
 
+/** ردیفِ «ویرایش در انتظار» — جوابِ زبانی به «چی عوض بشه؟» */
+export interface PendingEditRow {
+  user_id: number;
+  task_id: number;
+  chat_id: number;
+  created_at: string;
+}
+
 /** خروجی استخراج هوشمند تسک از متن کاربر */
 export interface ParsedTask {
-  intent: "create_task" | "other";
+  intent:
+    | "create_task"
+    | "delete_tasks"
+    | "update_task"
+    | "nearest_deadline"
+    | "list_tasks"
+    | "export_report"
+    | "user_tasks_query"
+    | "other";
   title: string;
   description: string;
   /** نام/یوزرنیم مسئول؛ "" یعنی خودِ گوینده */
@@ -113,4 +129,11 @@ export interface ParsedTask {
   reminder_hours: number;       // برای every_hours (بازه) یا before_deadline (فاصله تا ددلاین)
   reminder_date: string;        // YYYY-MM-DD برای once
   status: TaskStatus;
+  // —— نیت‌های دیگر ——
+  delete_scope: "" | "all" | "done"; // حذف: همه‌ی بازها / فقط تموم‌شده‌ها
+  task_ref: string;             // ارجاع به تسک (شناسه یا تکه‌ای از عنوان) برای حذف/ویرایش
+  update_field: string;         // title|description|assignee|start|due|status|reminder
+  update_value: string;         // مقدار جدید (عین متن کاربر)
+  target_user: string;          // برای user_tasks_query
+  list_filter: "" | "open" | "done" | "all";
 }

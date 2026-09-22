@@ -20,10 +20,15 @@ export function detectListRequest(text: string): "open" | "done" | "all" | null 
   return "open";
 }
 
+/** فعل‌های عملیاتی — اگر باشن، «گزارش/خروجی» در جمله موضوعِ فعل است نه درخواست فایل */
+const ACTION_VERB = /ویرایش|آپدیت|اپدیت|تغییر|عوض|حذف|پاک|تموم|بساز|ایجاد|ساخت|ثبت|یادداشت/;
+
 /** درخواست خروجی/گزارش از تسک‌ها؟ */
 export function detectExportRequest(text: string): boolean {
   const t = text.replace(/احمق/g, " ").replace(/\u200c/g, " ");
   if (CREATE_VERB.test(t)) return false;
+  // «تسک گزارش رو ویرایش کن» — «گزارش» اینجا عنوانِ تسک است، نه درخواست فایل!
+  if (ACTION_VERB.test(t)) return false;
   const wantsFile = /خروجی|گزارش|تاریخچه|هیستوری|export|اکسپورت|pdf|پی\s?دی\s?اف/i.test(t);
   const aboutTasks = /تسک|تاسک/.test(t);
   const asking = /بده|بگیر|کن|میخوام|می\s?خوام|برام/.test(t);
@@ -36,15 +41,17 @@ export function detectUserTasksQuery(text: string): string | null {
   const t = text.replace(/احمق/g, " ").replace(/\u200c/g, " ").trim();
   if (CREATE_VERB.test(t)) return null;
   if (!/تسک|تاسک|کار/.test(t)) return null;
+  // ضمایر اول‌شخص یعنی «تسک‌های خودم» — کوئریِ کاربرِ دیگر نیست!
+  const SELF_RE = /^(من|منو|خودم|خودمم|م|مون|مالم|باقی)$/i;
 
   // «تسک‌های X» / «تسک های X» — X تا انتهای جمله یا فعل پرسشی
   let m = t.match(/تسک\s*های\s+(?:@?)([\w\u0600-\u06FF]+)(?:\s+(?:چیا|چی|کی|رو|را|هستن|است|داره|داره|بگو|نشون|نمایش))?/);
-  if (m) return m[1];
+  if (m && !SELF_RE.test(m[1])) return m[1];
   // «X چه تسکی داره؟» / «X چه کارهایی داره؟»
   m = t.match(/(@?[\w\u0600-\u06FF]+)\s+چه\s*(تسک|تاسک|کار\s*هایی|کارهایی)\s*(ی)?\s*دار/);
-  if (m) return m[1];
+  if (m && !SELF_RE.test(m[1].replace(/^@/, ""))) return m[1];
   // «برای X چه تسکی» — فقط وقتی پرسشی است
   m = t.match(/برای\s+(@?[\w\u0600-\u06FF]+)\s+چه\s*(تسک|تاسک|کار)/);
-  if (m) return m[1];
+  if (m && !SELF_RE.test(m[1].replace(/^@/, ""))) return m[1];
   return null;
 }
