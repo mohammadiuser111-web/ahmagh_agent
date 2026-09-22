@@ -13,6 +13,8 @@ export function detectListRequest(text: string): "open" | "done" | "all" | null 
   if (CREATE_VERB.test(t)) return null;
   // درخواست فایل (خروجی/گزارش/تاریخچه) از مسیر لیست جدا است
   if (/خروجی|گزارش|تاریخچه|هیستوری|export|اکسپورت|pdf|پی\s?دی\s?اف/i.test(t)) return null;
+  // فعلِ عملیاتی → ویرایش/حذف است، نه لیست («تاریخ پایان تسک رو تغییر بده» — «بده» فعلِ لیست نیست!)
+  if (/ویرایش|آپدیت|اپدیت|تغییر|عوض|حذف|پاک|بساز|ایجاد|ساخت|ثبت/.test(t)) return null;
   if (!/لیست|نشون|نمایش|بگو|بین|بده|دارم|داریم|چیه|چی هست|چه/.test(t)) return null;
 
   if (/تموم|تمام|انجام\s?شده|پایان\s?یافته|تموم\s?شده|all\s?done/.test(t)) return "done";

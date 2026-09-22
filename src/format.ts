@@ -87,6 +87,8 @@ export function statusKeyboard(task: Pick<TaskRow, "id" | "status">) {
   });
   const rows = [[button("🔄 در حال انجام", "in_progress"), button("✅ تمام شد", "done")]];
   if (task.status !== "not_started") rows.push([button("⬜️ شروع‌نشده کن", "not_started")]);
+  // ✏️🗑 تعامل مستقیم با تسک از روی کارت
+  rows.push([{ text: "✏️ ویرایش", callback_data: `edt|${task.id}` }, { text: "🗑 حذف", callback_data: `delx|${task.id}` }]);
   return { inline_keyboard: rows };
 }
 

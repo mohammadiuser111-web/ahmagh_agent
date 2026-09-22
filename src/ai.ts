@@ -320,6 +320,7 @@ function extractTaskRef(t: string): string {
 const UPDATE_FIELD_FA: Record<string, string> = {
   عنوان: "title", توضیح: "description", توضیحات: "description",
   مسئول: "assignee", شروع: "start", پایان: "due", سررسید: "due", ددلاین: "due",
+  "تاریخ پایان": "due", "تاریخ شروع": "start",
   وضعیت: "status", یادآوری: "reminder", یاداوری: "reminder",
 };
 
@@ -349,8 +350,16 @@ export function heuristicParse(text: string): ParsedTask {
         /(عنوان|توضیحات?|مسئول|شروع|پایان|سررسید|ددلاین|وضعیت|یادآوری|یاداوری)\S*\s*(?:ش|شو|مون)?\s*(?:بشه|شود|بذار|بزار|کن|گردد)\s*[:،]?\s*(.+)/
       );
       if (fm) {
-        const field = UPDATE_FIELD_FA[fm[1]] ?? "";
+        const field = UPDATE_FIELD_FA[fm[1].replace(/\u200c/g, " ").trim()] ?? "";
         return { ...H_BASE, intent: "update_task", task_ref, update_field: field, update_value: fm[2].trim() };
+      }
+      // «تاریخ پایان تسک رو تغییر بده به فردا ساعت ۱۲»
+      const fm2 = t.match(
+        /(عنوان|توضیحات?|مسئول|شروع|پایان|سررسید|ددلاین|وضعیت|یادآوری|یاداوری|تاریخ\s*پایان|تاریخ\s*شروع)[^،,]{0,25}?(?:تغییر|ویرایش|آپدیت|اپدیت|عوض)\s*(?:بده|بذار|بزار|کن)\s*(?:به\s*)?(.+)/
+      );
+      if (fm2) {
+        const field = UPDATE_FIELD_FA[fm2[1].replace(/\u200c/g, " ").trim()] ?? "";
+        if (field) return { ...H_BASE, intent: "update_task", task_ref, update_field: field, update_value: fm2[2].trim() };
       }
       // فقط فعلِ دستوری («تموم کن/تمومش کن/تموم شد») — نه وقتی «تموم» داخل عنوان است
       if (/(?:تموم|انجام)(?:ش|شون)?\s*(?:کن|کنم|کردم|بشه|شود)/.test(t))

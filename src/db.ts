@@ -275,10 +275,43 @@ export async function deleteTasksOwnedBy(env: Env, userId: number, scope: "all" 
   return res.meta.changes ?? 0;
 }
 
+// ============================================================
+// احراز هویت گام‌به‌گام (دکمه‌ی ورود/ثبت‌نام)
+// ============================================================
+
+export async function savePendingAuth(
+  env: Env, userId: number, chatId: number, mode: "register" | "login", step: "username" | "password", username: string
+): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO pending_auth (user_id, chat_id, mode, step, username, created_at) VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(user_id) DO UPDATE SET chat_id = excluded.chat_id, mode = excluded.mode,
+       step = excluded.step, username = excluded.username, created_at = excluded.created_at`
+  )
+    .bind(userId, chatId, mode, step, username, new Date().toISOString())
+    .run();
+}
+
+export async function getPendingAuth(env: Env, userId: number): Promise<{ user_id: number; chat_id: number; mode: string; step: string; username: string; created_at: string } | null> {
+  return (
+    await env.DB.prepare("SELECT * FROM pending_auth WHERE user_id = ?").bind(userId).first<{
+      user_id: number; chat_id: number; mode: string; step: string; username: string; created_at: string;
+    }>()
+  ) ?? null;
+}
+
+export async function deletePendingAuth(env: Env, userId: number): Promise<void> {
+  await env.DB.prepare("DELETE FROM pending_auth WHERE user_id = ?").bind(userId).run();
+}
+
+export async function setUserRole(env: Env, userId: number, role: string): Promise<void> {
+  await env.DB.prepare("UPDATE users SET role = ? WHERE user_id = ?").bind(role, userId).run();
+}
+
 export async function cleanupPendingTasks(env: Env, olderThanHours = 6): Promise<void> {
   const cutoff = new Date(Date.now() - olderThanHours * 3_600_000).toISOString();
   await env.DB.prepare("DELETE FROM pending_tasks WHERE created_at < ?").bind(cutoff).run();
   await env.DB.prepare("DELETE FROM pending_edits WHERE created_at < ?").bind(cutoff).run();
+  await env.DB.prepare("DELETE FROM pending_auth WHERE created_at < ?").bind(cutoff).run();
 }
 
 /** تسک‌های «شروع‌نشده» با پرچم شروعِ خودکار که روزِ شروعشان رسیده */

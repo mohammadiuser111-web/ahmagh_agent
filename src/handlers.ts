@@ -9,6 +9,7 @@ import {
   deletePendingTask,
   deleteTaskById,
   deleteTasksOwnedBy,
+  findUserByLogin,
   findUserByName,
   findUserByUsername,
   getPendingEdit,
@@ -17,8 +18,11 @@ import {
   getUser,
   listTasks,
   recentUsers,
+  savePendingAuth,
   savePendingEdit,
   savePendingTask,
+  getPendingAuth,
+  deletePendingAuth,
   setTaskFields,
   updateTaskStatus,
   upsertUser,
@@ -26,7 +30,7 @@ import {
 import { extractDueDateTime, extractTask } from "./ai";
 import type { ParsedTask } from "./types";
 import { detectExportRequest, detectListRequest, detectUserTasksQuery } from "./intent";
-import { cmdRegister, cmdWhoami } from "./auth";
+import { cmdRegister, cmdWhoami, completeAuth, validateAuthUsername } from "./auth";
 import { buildHtmlReport, buildPdfReport, buildReportModel, exportKeyboard } from "./exporter";
 import { answerCallbackQuery, editMessageText, escapeHtml, sendDocument, sendMessage } from "./telegram";
 import {
@@ -122,6 +126,77 @@ const HINT = `من دستیارِ تسک‌هاتم — لازم نیست چیز
 • «خروجی تسک‌هامو بده»
 
 راهنمای کامل: /help`;
+
+const AUTH_WELCOME = `سلام! من <b>احمق‌ایجنت</b> هستم 🤖
+دستیارِ مدیریت کارهای شما.
+
+برای شروع، وارد حسابت شو یا ثبت‌نام کن: 👇`;
+
+function authKeyboard() {
+  return {
+    inline_keyboard: [
+      [{ text: "🔑 ورود", callback_data: "auth|login" }, { text: "📝 ثبت‌نام", callback_data: "auth|reg" }],
+    ],
+  };
+}
+
+async function sendAuthWelcome(env: Env, chatId: number): Promise<void> {
+  await sendMessage(env, chatId, AUTH_WELCOME, { reply_markup: authKeyboard() });
+}
+
+/** حسابِ ثبت‌شده؟ (username_login یا password_hash دارد) */
+async function isAuthed(env: Env, userId: number): Promise<boolean> {
+  const u = await getUser(env, userId);
+  return !!(u && (u.username_login || u.password_hash));
+}
+
+/** گفت‌وگوی گام‌به‌گام ورود/ثبت‌نام: یوزرنیم → رمز */
+async function tryPendingAuthReply(env: Env, msg: any, text: string): Promise<boolean> {
+  const pa = await getPendingAuth(env, msg.from.id);
+  if (!pa) return false;
+  if (Date.now() - Date.parse(pa.created_at) > 15 * 60_000) {
+    await deletePendingAuth(env, msg.from.id);
+    return false;
+  }
+  const clean = text.replace(/\u200c/g, " ").trim();
+  if (CANCEL_RE.test(clean)) {
+    await deletePendingAuth(env, msg.from.id);
+    await sendMessage(env, msg.chat.id, "👌 باشه، هر وقت خواستی دوباره: /start");
+    return true;
+  }
+  if (pa.step === "username") {
+    const u = clean.split(/\s+/)[0];
+    if (!validateAuthUsername(u)) {
+      await sendMessage(env, msg.chat.id, "❌ یوزرنیم باید ۳ تا ۳۲ کاراکتر لاتین، عدد یا _ باشد. دوباره بگو:");
+      return true;
+    }
+    if (pa.mode === "register") {
+      const existing = await findUserByLogin(env, u.toLowerCase());
+      if (existing && existing.user_id !== msg.from.id) {
+        await sendMessage(env, msg.chat.id, "❌ این نام کاربری قبلاً گرفته شده. یوزرنیم دیگری بگو:");
+        return true; // در همان گام یوزرنیم می‌ماند
+      }
+    }
+    await savePendingAuth(env, msg.from.id, msg.chat.id, pa.mode as "register" | "login", "password", u);
+    await sendMessage(env, msg.chat.id, `🔒 حالا <b>رمز عبور</b> خود را وارد کن${pa.mode === "register" ? " (حداقل ۴ کاراکتر)" : ""}:`);
+    return true;
+  }
+  // گامِ رمز
+  const pass = clean.split(/\s+/)[0];
+  const result = await completeAuth(env, msg.from.id, pa.mode as "register" | "login", pa.username, pass);
+  if (!result.startsWith("❌")) {
+    await deletePendingAuth(env, msg.from.id);
+    const me = await getUser(env, msg.from.id);
+    await sendMessage(env, msg.chat.id, result, { reply_markup: mainKeyboard(me?.role === "admin") });
+  } else {
+    await sendMessage(env, msg.chat.id, result);
+    if (result.includes("گرفته شده")) {
+      // یوزرنیم تکراری → برگرد به گام یوزرنیم
+      await savePendingAuth(env, msg.from.id, msg.chat.id, pa.mode as "register" | "login", "username", "");
+    }
+  }
+  return true;
+}
 
 export async function handleUpdate(env: Env, update: unknown): Promise<void> {
   const u = update as Record<string, any>;
@@ -269,10 +344,29 @@ async function onMessage(env: Env, msg: any): Promise<void> {
   await upsertUser(env, from, isPrivate ? msg.chat.id : null);
 
   const text = String(msg.text || "").trim();
+
+  // 🚪 درگاه ورود: کاربرِ ثبت‌نشده فقط خوش‌آمد + دکمه‌های ورود/ثبت‌نام می‌بیند
+  if (isPrivate && !(await isAuthed(env, from.id))) {
+    if (text.startsWith("/")) {
+      const c = text.split(/\s+/)[0].split("@")[0].toLowerCase();
+      if (["/start", "/register", "/login", "/help", "/whoami"].includes(c)) {
+        await onCommand(env, msg, text);
+        return;
+      }
+      await sendAuthWelcome(env, msg.chat.id);
+      return;
+    }
+    if (await tryPendingAuthReply(env, msg, text)) return;
+    await sendAuthWelcome(env, msg.chat.id);
+    return;
+  }
+
   if (text.startsWith("/")) {
     await onCommand(env, msg, text);
     return;
   }
+  // ادامه‌ی گفت‌وگوی ورود (/login برای کاربرِ واردشده هم ممکن است)
+  if (isPrivate && (await tryPendingAuthReply(env, msg, text))) return;
   // دکمه‌های منو
   if (await onMenuButton(env, msg, text)) return;
   // 👂 در گروه فقط با صدازدن (احمق)؛ در چت خصوصی هر پیامی فهمیده می‌شود
@@ -347,6 +441,10 @@ async function onCommand(env: Env, msg: any, text: string): Promise<void> {
 
   switch (cmd) {
     case "/start": {
+      if (msg.chat?.type === "private" && !(await isAuthed(env, msg.from.id))) {
+        await sendAuthWelcome(env, chatId);
+        return;
+      }
       const me0 = await getUser(env, msg.from.id);
       await sendMessage(env, chatId, WELCOME, { reply_markup: mainKeyboard(me0?.role === "admin") });
       return;
@@ -391,9 +489,21 @@ async function onCommand(env: Env, msg: any, text: string): Promise<void> {
       await cmdEdit(env, msg, arg);
       return;
     case "/register":
-    case "/signup":
-      await cmdRegister(env, msg, arg);
+    case "/signup": {
+      if (arg) {
+        await cmdRegister(env, msg, arg); // شکل قدیمی: /register user pass
+        return;
+      }
+      await savePendingAuth(env, msg.from.id, chatId, "register", "username", "");
+      await sendMessage(env, chatId, "📝 ثبت‌نام! 👤 <b>یوزرنیم</b> خود را وارد کن (لاتین/عدد، ۳ تا ۳۲ کاراکتر):");
       return;
+    }
+    case "/login":
+    case "/signin": {
+      await savePendingAuth(env, msg.from.id, chatId, "login", "username", "");
+      await sendMessage(env, chatId, "🔑 ورود! 👤 <b>یوزرنیم</b> خود را وارد کن:");
+      return;
+    }
     case "/whoami":
       await cmdWhoami(env, msg);
       return;
@@ -670,16 +780,7 @@ async function createAndAnnounceTask(
         : `از ${fmtDate(fields.start_date)} به‌صورت خودکار «در حال انجام» می‌شه 🚦`
     );
   }
-  if (fields.reminder) {
-    const rt = reminderSpecText({
-      reminder_type: fields.reminder.type,
-      reminder_time: fields.reminder.time,
-      reminder_interval_hours: fields.reminder.interval_hours,
-      reminder_lead_minutes: fields.reminder.lead_minutes,
-      reminder_at: fields.reminder.at,
-    });
-    if (rt) notes.push(`🔔 یادآوری: ${rt}`);
-  }
+  // نکته: خط «🔔 یادآوری» در خود کارت هست — اینجا دوباره تکرارش نمی‌کنیم
 
   await sendMessage(
     env,
@@ -706,7 +807,7 @@ const CANCEL_RE = /^(بی\s*خیال|بی\s*خیالش|لغو|کنسل|cancel|ن
 /** پیامِ «دستورمانند» — جوابِ سؤالِ باز نیست؛ سؤال قبلی را کنار می‌گذارد
  *  (مثل «همه تسک‌هامو حذف کن» وقتی بات منتظرِ «تا کی؟» است) */
 const COMMAND_LIKE_RE =
-  /حذف|پاک|ویرایش|آپدیت|اپدیت|نزدیک|بساز|ایجاد|ساخت|ثبت|یادداشت|نوت|منو|راهنما|کاربرها|چیا هست|چیا هستن/;
+  /حذف|پاک|ویرایش|آپدیت|اپدیت|نزدیک|بساز|ایجاد|ساخت|ثبت|یادداشت|نوت|منو|راهنما|کاربرها|چیا هست|چیا هستن|تغییر|عوض/;
 
 /**
  * اگر تسکی در انتظارِ تاریخ پایان باشد، این پیامِ خصوصی جوابِ همان سؤال است.
@@ -1488,6 +1589,66 @@ async function onCallbackQuery(env: Env, cq: any): Promise<void> {
   if (msg.chat?.type === "private") await upsertUser(env, from, msg.chat.id);
 
   const parts = String(cq.data || "").split("|");
+
+  // 🚪 دکمه‌های ورود/ثبت‌نام
+  if (parts[0] === "auth" && parts.length === 2) {
+    if (await isAuthed(env, from.id)) {
+      await answerCallbackQuery(env, cq.id, "تو که همین الان هم داخل هستی 🙂");
+      const meA = await getUser(env, from.id);
+      await sendMessage(env, msg.chat.id, "😄", { reply_markup: mainKeyboard(meA?.role === "admin") });
+      return;
+    }
+    const mode = parts[1] === "reg" ? "register" : "login";
+    await savePendingAuth(env, from.id, msg.chat.id, mode, "username", "");
+    await answerCallbackQuery(env, cq.id, "⏳");
+    await sendMessage(
+      env,
+      msg.chat.id,
+      mode === "register"
+        ? "📝 👤 <b>یوزرنیم</b> خود را وارد کن (لاتین/عدد، ۳ تا ۳۲ کاراکتر):"
+        : "🔑 👤 <b>یوزرنیم</b> خود را وارد کن:"
+    );
+    return;
+  }
+
+  // ✏️ ویرایش از روی کارت تسک
+  if (parts[0] === "edt" && parts.length === 2) {
+    const task = await getTask(env, Number(enDigits(parts[1])));
+    if (!task) {
+      await answerCallbackQuery(env, cq.id, "این تسک حذف شده ❌");
+      return;
+    }
+    if (!isMine(task, from.id)) {
+      await answerCallbackQuery(env, cq.id, "این تسک مال تو نیست 😐");
+      return;
+    }
+    await answerCallbackQuery(env, cq.id, "⏳");
+    await savePendingEdit(env, from.id, task.id, msg.chat.id);
+    await askEditValue(env, msg.chat.id, task);
+    return;
+  }
+
+  // 🗑 حذف از روی کارت تسک → پیام تأیید
+  if (parts[0] === "delx" && parts.length === 2) {
+    const task = await getTask(env, Number(enDigits(parts[1])));
+    if (!task) {
+      await answerCallbackQuery(env, cq.id, "این تسک حذف شده ❌");
+      return;
+    }
+    if (!isMine(task, from.id)) {
+      await answerCallbackQuery(env, cq.id, "این تسک مال تو نیست 😐");
+      return;
+    }
+    await answerCallbackQuery(env, cq.id, "⏳");
+    await sendMessage(env, msg.chat.id, `🗑 تسک «${escapeHtml(truncate(task.title, 60))}» رو حذف کنم؟ برنمی‌گرده!`, {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "آره، حذفش کن 🗑", callback_data: `del|${task.id}` }, { text: "نه ❌", callback_data: "noop" }],
+        ],
+      },
+    });
+    return;
+  }
 
   // خروجی گزارشی: ex|<user_id>|<html|pdf>
   if (parts[0] === "ex" && parts.length === 3) {
