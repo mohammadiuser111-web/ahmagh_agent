@@ -296,8 +296,16 @@ async function onMessage(env: Env, msg: any): Promise<void> {
   }
 
   // ۲) شاید این پیام، جوابِ سؤالِ بازِ بات است («تا کی؟» / «چی عوض بشه؟»)
-  if (isPrivate && (await tryPendingDeadlineReply(env, msg, text))) return;
-  if (isPrivate && (await tryPendingEditReply(env, msg, text))) return;
+  //    ولی اگر واضحاً دستورِ جدیدی است، سؤالِ قبلی را کنار می‌گذاریم — نه اینکه پیامش را بلعیم!
+  if (isPrivate) {
+    if (COMMAND_LIKE_RE.test(text)) {
+      await deletePendingTask(env, msg.from.id);
+      await deletePendingEdit(env, msg.from.id);
+    } else {
+      if (await tryPendingDeadlineReply(env, msg, text)) return;
+      if (await tryPendingEditReply(env, msg, text)) return;
+    }
+  }
 
   // ۳) 🧠 هوش مصنوعی ابزار را انتخاب می‌کند: ساخت / حذف / ویرایش / نزدیک‌ترین / …
   const known = await recentUsers(env);
@@ -692,8 +700,13 @@ async function createAndAnnounceTask(
   return task;
 }
 
-const PENDING_TTL_MS = 6 * 3_600_000; // جوابِ «تاریخ پایان» تا ۶ ساعت اعتبار دارد
+const PENDING_TTL_MS = 1 * 3_600_000; // جوابِ سؤال‌های باز («تا کی؟» / «چی عوض بشه؟») تا ۱ ساعت اعتبار دارد
 const CANCEL_RE = /^(بی\s*خیال|بی\s*خیالش|لغو|کنسل|cancel|نه)\s*[!.؟]*$/i;
+
+/** پیامِ «دستورمانند» — جوابِ سؤالِ باز نیست؛ سؤال قبلی را کنار می‌گذارد
+ *  (مثل «همه تسک‌هامو حذف کن» وقتی بات منتظرِ «تا کی؟» است) */
+const COMMAND_LIKE_RE =
+  /حذف|پاک|ویرایش|آپدیت|اپدیت|نزدیک|بساز|ایجاد|ساخت|ثبت|یادداشت|نوت|منو|راهنما|کاربرها|چیا هست|چیا هستن/;
 
 /**
  * اگر تسکی در انتظارِ تاریخ پایان باشد، این پیامِ خصوصی جوابِ همان سؤال است.
@@ -1290,6 +1303,12 @@ async function applyTaskFieldEdit(env: Env, msg: any, task: TaskRow, field: stri
 
 const isMine = (t: TaskRow, userId: number) => t.creator_id === userId || t.assignee_id === userId;
 
+/** تطبیق ارجاع با عنوان — نیم‌فاصله و فاصله یکسان فرض می‌شوند */
+const titleMatches = (title: string, ref: string) => {
+  const norm = (x: string) => x.replace(/\u200c/g, "");
+  return norm(title).includes(norm(ref)) || title.includes(ref);
+};
+
 /** حذف — از مسیر AI یا هیوریستیک: «همه تسک‌هامو حذف کن» / «تسک گزارش رو حذف کن» */
 async function cmdDeleteTasks(env: Env, msg: any, parsed: ParsedTask): Promise<void> {
   const ref = (parsed.task_ref || "").trim();
@@ -1302,7 +1321,7 @@ async function cmdDeleteTasks(env: Env, msg: any, parsed: ParsedTask): Promise<v
       if (t && isMine(t, msg.from.id)) candidates = [t];
     } else {
       const rows = await listTasks(env, { involved: msg.from.id, status: "open" });
-      candidates = rows.filter((t) => t.title.includes(ref));
+      candidates = rows.filter((t) => titleMatches(t.title, ref));
     }
     if (!candidates.length) {
       await sendMessage(env, msg.chat.id, "🤔 تسکی با این مشخصات پیدا نکردم. با «تسک‌هامو نشون بده» لیست رو ببین.");
@@ -1366,7 +1385,7 @@ async function cmdUpdateTask(env: Env, msg: any, parsed: ParsedTask): Promise<vo
     if (t && isMine(t, msg.from.id)) candidates = [t];
   } else if (ref) {
     const rows = await listTasks(env, { involved: msg.from.id, status: "open" });
-    candidates = rows.filter((t) => t.title.includes(ref));
+    candidates = rows.filter((t) => titleMatches(t.title, ref));
   } else {
     candidates = await listTasks(env, { involved: msg.from.id, status: "open" });
   }

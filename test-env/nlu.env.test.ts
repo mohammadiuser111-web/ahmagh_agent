@@ -159,6 +159,51 @@ describe("⏰ نزدیک‌ترین ددلاین", () => {
   });
 });
 
+describe("🩹 سؤالِ بازِ معلق نباید پیام‌ها را بلعد (باگِ لایو ۱۱:۰۱)", () => {
+  it("درافتِ «تا کی؟» معلق است → «تمام تسک های منو حذف کن» → حذف، نه «تاریخ رو نفهمیدم»", async () => {
+    // تسکی بدون تاریخ پایان → بات می‌پرسد «تا کی؟» و درافت می‌سازد
+    await h.say(ALI, "یه تسک بساز: بی‌تاریخ");
+    expect(h.tasks().length).toBe(0);
+    expect(h.texts(ALI.id).some((x) => x.includes("تا کی"))).toBe(true);
+
+    // حالا دستور حذف — نباید بلعیده شود
+    await h.say(ALI, "احمق یه تسک بساز: واقعی، تا فردا");
+    expect(h.tasks().length).toBe(1);
+    await h.say(ALI, "تمام تسک های منو حذف کن");
+    expect(h.lastText(ALI.id)).not.toContain("نفهمیدم");
+    const last = h.to(ALI.id).filter((m) => m.kind === "message").at(-1)!;
+    expect(JSON.stringify(last.keyboard ?? {})).toContain("delq|all");
+    await h.callback(ALI, "delq|all");
+    expect(h.tasks().length).toBe(0);
+  });
+
+  it("«تسک شماره ۱ رو میخوام ویرایش کنم» (جمله‌ی دقیق لایو) → «چی عوض بشه؟»", async () => {
+    await h.say(ALI, "یه تسک بساز: اول، تا فردا");
+    await h.say(ALI, "یه تسک بساز: دوم، تا فردا");
+    const t = h.tasks()[0];
+    await h.say(ALI, "تسک شماره 1 رو میخوام ویرایش کنم");
+    expect(h.lastText(ALI.id)).not.toContain("نفهمیدم");
+    expect(h.lastText(ALI.id)).toContain("چی عوض بشه");
+    await h.say(ALI, "عنوان: اولِ واقعی");
+    expect(h.task(t.id)!.title).toBe("اولِ واقعی");
+  });
+
+  it("جوابِ عادیِ «فردا» هنوز به درافتِ «تا کی؟» جواب می‌دهد", async () => {
+    await h.say(ALI, "یه تسک بساز: بی‌تاریخ ۲");
+    await h.say(ALI, "فردا");
+    expect(h.tasks().length).toBe(1);
+    expect(h.tasks()[0].due_date).toBeTruthy();
+  });
+
+  it("جوابِ ویرایش («وضعیت: تموم») دستورمانند حساب نمی‌شود", async () => {
+    await h.say(ALI, "یه تسک بساز: تموم‌کردنی، تا فردا");
+    const t = h.tasks().at(-1)!;
+    await h.say(ALI, "تسک تموم‌کردنی رو ویرایش کن");
+    await h.say(ALI, "وضعیت: تموم");
+    expect(h.task(t.id)!.status).toBe("done");
+  });
+});
+
 describe("👂 بدون کلیدواژه‌ی «احمق»", () => {
   it("ساخت و لیست بدون «احمق»", async () => {
     await h.say(ALI, "یه تسک بساز: خرید نان، تا فردا");

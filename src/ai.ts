@@ -352,7 +352,9 @@ export function heuristicParse(text: string): ParsedTask {
         const field = UPDATE_FIELD_FA[fm[1]] ?? "";
         return { ...H_BASE, intent: "update_task", task_ref, update_field: field, update_value: fm[2].trim() };
       }
-      if (/تموم|انجام/.test(t)) return { ...H_BASE, intent: "update_task", task_ref, update_field: "status", update_value: "تموم" };
+      // فقط فعلِ دستوری («تموم کن/تمومش کن/تموم شد») — نه وقتی «تموم» داخل عنوان است
+      if (/(?:تموم|انجام)(?:ش|شون)?\s*(?:کن|کنم|کردم|بشه|شود)/.test(t))
+        return { ...H_BASE, intent: "update_task", task_ref, update_field: "status", update_value: "تموم" };
       return { ...H_BASE, intent: "update_task", task_ref };
     }
     // ⏰ نزدیک‌ترین ددلاین
