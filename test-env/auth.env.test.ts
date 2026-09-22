@@ -43,8 +43,12 @@ describe("🚪 ورود/ثبت‌نام دکمه‌ای", () => {
     expect(h.lastText(NEWBIE.id)).toContain("رمز عبور");
 
     await h.say(NEWBIE, "secret123");
+    // حالا گامِ اسم مستعار (به جای @)
+    expect(h.lastText(NEWBIE.id)).toContain("اسم مستعار");
+    await h.say(NEWBIE, "نوآمده");
     const last = h.lastText(NEWBIE.id);
-    expect(last).toContain("ثبت‌نام کامل شد");
+    expect(last).toContain("اسم مستعارت شد");
+    expect(last).toContain("نوآمده");
     expect(JSON.stringify(h.to(NEWBIE.id).filter((m) => m.kind === "message").at(-1)!.keyboard ?? {})).toContain("🗂 مدیریت تسک");
 
     // حالا بات برایش کار می‌کند
@@ -228,6 +232,45 @@ describe("🐞 باگ‌های لایو ۱۱:۵۷", () => {
 });
 
 describe("🐞 باگ‌های لایو ۱۱:۴۰", () => {
+  it("ثبت‌نام با «-» → بدون اسم مستعار؛ بعداً /alias", async () => {
+    await h.callback(NEWBIE, "auth|reg");
+    await h.say(NEWBIE, "n8_user");
+    await h.say(NEWBIE, "pass1234");
+    await h.say(NEWBIE, "-");
+    expect(h.lastText(NEWBIE.id)).toContain("بدون اسم مستعار");
+    await h.say(NEWBIE, "/alias ایمان");
+    expect(h.lastText(NEWBIE.id)).toContain("ایمان");
+    const u = (h.env.DB as any).raw("SELECT alias FROM users WHERE user_id=2001").get();
+    expect(u.alias).toBe("ایمان");
+  });
+
+  it("ادمین: «برای ممد یه تسک بساز» → با اسم مستعار مستقیم می‌سازد", async () => {
+    await h.say(ASGHAR, "برای ممد یه تسک بساز: تست مستعار، تا فردا");
+    const t = h.tasks().at(-1)!;
+    expect(t).toBeTruthy();
+    expect(t.assignee_id).toBe(MOHAMMAD.id);
+    expect(t.title).toContain("تست مستعار");
+  });
+
+  it("ادمین: دو «ایمان» موجود → ابهام‌زدایی با دکمه، بعد ساخت", async () => {
+    // یک کاربر چهارم با همان اسم مستعار
+    const REZA = { id: 2002, first_name: "رضا", username: "reza_x" };
+    await h.say(REZA, "/register reza_user pass1234 ایمان");
+    await h.say(NEWBIE, "/register newbie_user pass1234 ایمان");
+    await h.say(ASGHAR, "برای ایمان یه تسک بساز: تست ابهام، تا فردا");
+    const pick = h.to(ASGHAR.id).filter((m) => m.kind === "message").at(-1)!;
+    expect(pick.text ?? "").toContain("چند تا");
+    expect(pick.text ?? "").toContain("ایمان");
+    expect(JSON.stringify(pick.keyboard ?? {})).toContain(`asp|${REZA.id}`);
+    expect(JSON.stringify(pick.keyboard ?? {})).toContain(`asp|${NEWBIE.id}`);
+    expect(h.tasks().length).toBe(0); // هنوز نساخته
+    await h.callback(ASGHAR, `asp|${REZA.id}`);
+    const t = h.tasks().at(-1)!;
+    expect(t).toBeTruthy();
+    expect(t.assignee_id).toBe(REZA.id);
+    expect(t.title).toContain("تست ابهام");
+  });
+
   it("«ساعت ۱۲ شب امشب یاداوری کن» ظهر گفته شده → نیمه‌شبِ امشب = فردا ۰۰:۰۰ (نه شلیکِ همان لحظه)", async () => {
     await h.say(ALI, "یه تسک جدید بسازم\nباید طراحی لندینگ کنم برای یه سایتی\nتا ساعت 6 فردا وقت دارم\nساعت 12 شب امشب هم یاداوری کن");
     const t = h.tasks().at(-1)!;
@@ -267,7 +310,7 @@ describe("🐞 باگ‌های لایو ۱۱:۴۰", () => {
     await h.say(ALI, "🔙 بازگشت");
     expect(JSON.stringify(h.to(ALI.id).filter((m) => m.kind === "message").at(-1)!.keyboard ?? {})).toContain("📊 گزارش");
     await h.say(ALI, "📊 گزارش");
-    expect(h.lastText(ALI.id)).toContain("فرمت");
+    expect(h.lastText(ALI.id)).toContain("شکلی");
     await h.say(ALI, "🚪 خروج");
     const out = h.to(ALI.id).filter((m) => m.kind === "message").at(-1)!;
     expect(JSON.stringify(out.keyboard ?? {})).toContain("out|yes");

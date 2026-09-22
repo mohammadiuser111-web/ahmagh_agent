@@ -219,10 +219,10 @@ export class Harness {
 /** ساخت هارنس + ثبت‌نام سه کاربر صحنه */
 export async function createScene(): Promise<Harness> {
   const h = await new Harness().init();
-  // ثبت‌نام: اصغر → ادمین؛ علی و ممد → کاربر عادی
-  await h.say(ASGHAR, `/register ${ADMIN_USER} ${ADMIN_PASS}`);
-  await h.say(ALI, "/register ali_user pass1234");
-  await h.say(MOHAMMAD, "/register mmd_user pass5678");
+  // ثبت‌نام: اصغر → ادمین؛ علی و ممد → کاربر عادی (با اسم مستعار)
+  await h.say(ASGHAR, `/register ${ADMIN_USER} ${ADMIN_PASS} اصغر`);
+  await h.say(ALI, "/register ali_user pass1234 علی");
+  await h.say(MOHAMMAD, "/register mmd_user pass5678 ممد");
   h.outbox = []; // پیام‌های خوش‌آمد/ثبت‌نام را دور بریز
   return h;
 }

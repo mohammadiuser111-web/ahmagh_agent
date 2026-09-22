@@ -36,8 +36,23 @@ export function truncate(s: string, n: number): string {
 
 export function displayName(u: UserRow | null | undefined, fallback = "ناشناس"): string {
   if (!u) return escapeHtml(fallback);
-  const name = (u.first_name && u.first_name.trim()) || (u.username ? `@${u.username}` : "") || `#${u.user_id}`;
+  // اسم مستعار ملاک است — به جای @ (اگه نبود: نام تلگرام، بعد @یوزرنیم)
+  const name =
+    (u.alias && u.alias.trim()) ||
+    (u.first_name && u.first_name.trim()) ||
+    (u.username ? `@${u.username}` : "") ||
+    `#${u.user_id}`;
   return escapeHtml(name);
+}
+
+/** برچسب خام (بدون escape) برای دکمه‌ها — alias اول */
+export function userLabel(u: Pick<UserRow, "alias" | "first_name" | "username" | "user_id">): string {
+  return (
+    (u.alias && u.alias.trim()) ||
+    (u.first_name && u.first_name.trim()) ||
+    (u.username ? `@${u.username}` : "") ||
+    `#${u.user_id}`
+  );
 }
 
 /** کارت کامل تسک (HTML تلگرام) — دیزاین دومرحله‌ای: پس از «تسک ساخته شد» همین کارت جایگزین پیام می‌شود */

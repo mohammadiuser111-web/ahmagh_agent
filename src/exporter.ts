@@ -1,280 +1,427 @@
 /**
- * خروجی گزارشی از تسک‌ها: HTML (RTL زیبا) یا PDF فارسی (pdf-lib + Vazir)
+ * خروجی گزارشی از تسک‌ها — HTML تک‌فایل (RTL، بدون وابستگی خارجی، بدون JS)
+ *
+ * سه شکل خروجی:
+ *  - list   : جدولی/لیستی
+ *  - report : گزارش‌طور (سلسله‌مراتب تحریریه‌ای)
+ *  - dash   : داشبورد (KPI + نمودار SVG)
+ *
+ * دیزاین (طبق استاندارد frontend-design):
+ *  - توکن‌های CSS (رنگ/فاصله/شعاع) — بدون مقدار هاردکد خارج از توکن‌ها
+ *  - تم سیاه‌وسفید؛ رنگ فقط برای نمودار و نشانِ وضعیت
+ *  - فاصله‌بندی ۸px، شعاع ۴/۸/۱۲، خط‌-height ≥۱.۶، بدون سایه‌ی سنگین
+ *  - واکنش‌گرا و مناسب چاپ
  */
-import { PDFDocument, rgb } from "pdf-lib";
-import fontkit from "@pdf-lib/fontkit";
-import { PersianShaper } from "arabic-persian-reshaper";
-import { VAZIR_TTF_B64 } from "./fonts/vazir";
 import type { TaskRow } from "./types";
-import { STATUS_EMOJI, STATUS_LABEL } from "./format";
+import { STATUS_LABEL } from "./format";
 import { escapeHtml } from "./telegram";
 import { faDigits, fmtDate, fmtTimeTehran, todayTehranISO } from "./dates";
 
-// ============================================================
-// دکمه‌ی انتخاب فرمت خروجی
-// ============================================================
-export function exportKeyboard(userId: number) {
-  return {
-    inline_keyboard: [
-      [
-        { text: "🌐 HTML", callback_data: `ex|${userId}|html` },
-        { text: "📄 PDF", callback_data: `ex|${userId}|pdf` },
-      ],
-    ],
-  };
-}
+export type ExportStyle = "list" | "report" | "dash";
+
+export const STYLE_LABEL: Record<ExportStyle, string> = {
+  list: "لیستی (جدول)",
+  report: "گزارش‌طور",
+  dash: "داشبورد",
+};
 
 // ============================================================
 // داده‌ی مشترک
 // ============================================================
-interface ReportModel {
+
+export interface ReportUser {
+  id: number;
   name: string;
-  nowFa: string;
-  open: TaskRow[];
-  done: TaskRow[];
-  total: number;
+  tasks: TaskRow[];
 }
 
-export function buildReportModel(tasks: TaskRow[], name: string): ReportModel {
+export interface ReportModel {
+  scopeName: string;
+  nowFa: string;
+  multiUser: boolean;
+  tasks: TaskRow[];
+  users: ReportUser[];
+  total: number;
+  open: TaskRow[];
+  inProgress: TaskRow[];
+  notStarted: TaskRow[];
+  done: TaskRow[];
+  overdue: TaskRow[];
+}
+
+/** ساخت مدل — users فقط برای خروجیِ «همه» (گروه‌بندی بر اساس مسئول) */
+export function buildReportModel(
+  tasks: TaskRow[],
+  scopeName: string,
+  users?: { id: number; name: string }[]
+): ReportModel {
+  const now = Date.now();
   const open = tasks.filter((t) => t.status !== "done");
   const done = tasks.filter((t) => t.status === "done");
+  const overdue = open.filter((t) => {
+    const due = t.due_at ? Date.parse(t.due_at) : t.due_date ? Date.parse(`${t.due_date}T23:59:59+03:30`) : 0;
+    return due > 0 && now > due;
+  });
+  const byUser = new Map<number, ReportUser>();
+  if (users?.length) {
+    for (const u of users) byUser.set(u.id, { id: u.id, name: u.name, tasks: [] });
+    for (const t of tasks) {
+      const g = byUser.get(t.assignee_id);
+      if (g) g.tasks.push(t);
+      else byUser.set(t.assignee_id, { id: t.assignee_id, name: "ناشناس", tasks: [t] });
+    }
+  }
   return {
-    name,
+    scopeName,
     nowFa: `${fmtDate(todayTehranISO())} — ${fmtTimeTehran(new Date().toISOString())}`,
-    open,
-    done,
+    multiUser: !!users?.length,
+    tasks,
+    users: [...byUser.values()].sort((a, b) => b.tasks.length - a.tasks.length),
     total: tasks.length,
-  };
-}
-
-function taskLine(t: TaskRow): { main: string; meta: string } {
-  const time = (iso: string | null) => (iso ? ` ساعت ${fmtTimeTehran(iso)}` : "");
-  return {
-    main: `${t.title}`,
-    meta:
-      `شروع: ${fmtDate(t.start_date)}${time(t.start_at)}` +
-      ` | پایان: ${fmtDate(t.due_date)}${time(t.due_at)}` +
-      ` | وضعیت: ${STATUS_LABEL[t.status]}`,
+    open,
+    inProgress: open.filter((t) => t.status === "in_progress"),
+    notStarted: open.filter((t) => t.status === "not_started"),
+    done,
+    overdue,
   };
 }
 
 // ============================================================
-// HTML — کاملاً self-contained (بدون وابستگی خارجی)
+// اجزای مشترک
 // ============================================================
-export function buildHtmlReport(m: ReportModel): string {
-  const card = (t: TaskRow) => {
-    const { main, meta } = taskLine(t);
-    return `    <div class="card ${t.status}">
-      <div class="title">${STATUS_EMOJI[t.status]} ${escapeHtml(main)}</div>
-      ${t.description ? `<div class="desc">${escapeHtml(t.description)}</div>` : ""}
-      <div class="meta">${escapeHtml(meta)} | شناسه: ${faDigits(t.id)}</div>
-    </div>`;
-  };
-  const section = (title: string, rows: TaskRow[]) =>
-    rows.length
-      ? `  <h2>${title} <span class="badge">${faDigits(rows.length)}</span></h2>\n${rows.map(card).join("\n")}`
-      : "";
 
-  const inProgress = m.open.filter((t) => t.status === "in_progress");
-  const notStarted = m.open.filter((t) => t.status === "not_started");
+const dueText = (t: TaskRow) =>
+  t.due_date ? `${fmtDate(t.due_date)}${t.due_at ? ` — ${fmtTimeTehran(t.due_at)}` : ""}` : "—";
 
+const isOverdue = (m: ReportModel, t: TaskRow) => m.overdue.some((o) => o.id === t.id);
+
+/** چیپ وضعیت — نقطه‌ی رنگی + متن (رنگ فقط همین‌جا و در نمودار) */
+function statusChip(t: TaskRow): string {
+  const cls = t.status === "done" ? "done" : t.status === "in_progress" ? "doing" : "todo";
+  return `<span class="chip ${cls}"><i></i>${STATUS_LABEL[t.status]}</span>`;
+}
+
+/** توکن‌های دیزاین — تم سیاه‌وسفید؛ رنگ فقط برای داده */
+const TOKENS_CSS = `
+  :root{
+    /* تایپوگرافی و رنگ‌های خنثی */
+    --bg:#ffffff; --ink:#111111; --ink-2:#555555; --ink-3:#8a8a8a;
+    --line:#e6e6e6; --line-strong:#cfcfcf; --surface:#fafafa;
+    /* رنگ داده — فقط نمودار و نشان وضعیت */
+    --c-done:#16a34a; --c-doing:#2563eb; --c-todo:#9ca3af; --c-over:#dc2626; --c-warn:#d97706;
+    /* فاصله (پایه ۸px) */
+    --sp-1:8px; --sp-2:16px; --sp-3:24px; --sp-4:32px; --sp-5:48px;
+    /* شعاع */
+    --r-s:4px; --r-m:8px; --r-l:12px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:"Vazirmatn","Vazir",Tahoma,"Segoe UI",sans-serif;
+    background:var(--bg);color:var(--ink);
+    line-height:1.7;font-size:14px;
+    padding:var(--sp-3) var(--sp-2) var(--sp-4);
+  }
+  .wrap{max-width:860px;margin:0 auto}
+  h1{font-size:28px;font-weight:800;letter-spacing:-.5px;line-height:1.3}
+  .sub{color:var(--ink-2);font-size:13px;margin-top:var(--sp-1)}
+  .rule{border:0;border-top:3px solid var(--ink);margin:var(--sp-2) 0 var(--sp-3)}
+  .chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2);white-space:nowrap}
+  .chip i{width:8px;height:8px;border-radius:50%;display:inline-block}
+  .chip.done i{background:var(--c-done)} .chip.doing i{background:var(--c-doing)} .chip.todo i{background:var(--c-todo)}
+  .over{color:var(--c-over);font-weight:700}
+  footer{margin-top:var(--sp-4);text-align:center;color:var(--ink-3);font-size:12px}
+  @media print{body{padding:0}}
+`;
+
+function page(m: ReportModel, title: string, body: string): string {
   return `<!DOCTYPE html>
 <html lang="fa" dir="rtl">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>گزارش تسک‌ها — ${escapeHtml(m.name)}</title>
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: "Vazirmatn", "Vazir", Tahoma, "Segoe UI", sans-serif; background: #f4f6f9; color: #1f2937; padding: 24px; line-height: 1.9; }
-  .wrap { max-width: 760px; margin: 0 auto; }
-  h1 { color: #111827; font-size: 26px; margin-bottom: 4px; }
-  .meta { color: #6b7280; font-size: 13px; margin-bottom: 16px; }
-  .summary { background: #111827; color: #fff; border-radius: 12px; padding: 12px 18px; font-size: 14px; margin-bottom: 24px; }
-  h2 { font-size: 18px; margin: 22px 0 10px; color: #374151; }
-  .badge { background: #e5e7eb; color: #374151; border-radius: 999px; font-size: 12px; padding: 1px 10px; vertical-align: middle; }
-  .card { background: #fff; border: 1px solid #e5e7eb; border-right: 4px solid #9ca3af; border-radius: 10px; padding: 12px 16px; margin-bottom: 10px; }
-  .card.not_started { border-right-color: #94a3b8; }
-  .card.in_progress { border-right-color: #f59e0b; }
-  .card.done { border-right-color: #10b981; }
-  .title { font-weight: 700; font-size: 15px; }
-  .desc { color: #4b5563; font-size: 13px; margin-top: 2px; }
-  .meta { color: #6b7280; font-size: 12px; margin-top: 6px; }
-  footer { margin-top: 28px; text-align: center; color: #9ca3af; font-size: 12px; }
-  @media print { body { background: #fff; } .card { break-inside: avoid; } }
-</style>
+<title>${title} — ${escapeHtml(m.scopeName)}</title>
+<style>${TOKENS_CSS}</style>
 </head>
 <body>
 <div class="wrap">
-  <h1>📋 گزارش تسک‌ها</h1>
-  <div class="meta">برای: ${escapeHtml(m.name)} | ${m.nowFa}</div>
-  <div class="summary">جمع‌بندی: ${faDigits(m.total)} تسک — ${faDigits(inProgress.length)} در حال انجام، ${faDigits(notStarted.length)} شروع‌نشده، ${faDigits(m.done.length)} تمام‌شده</div>
-  ${section("🔓 تسک‌های باز", notStarted)}
-  ${section("⏳ در حال انجام", inProgress)}
-  ${section("✅ تمام‌شده", m.done)}
-  <footer>ساخته‌شده توسط احمق‌ایجنت 🤖 — ${m.nowFa}</footer>
+  <header>
+    <h1>${title}</h1>
+    <div class="sub">برای: <b>${escapeHtml(m.scopeName)}</b> · ${m.nowFa} · ${faDigits(m.total)} تسک</div>
+    <hr class="rule">
+  </header>
+  ${body}
+  <footer>ساخته‌شده توسط احمق‌ایجنت 🤖</footer>
 </div>
 </body>
 </html>`;
 }
 
 // ============================================================
-// PDF فارسی — شکل‌دهی حروف + bidi ساده + فونت Vazir
+// ۱) لیستی (جدولی)
 // ============================================================
 
-/** آیا کاراکتر در محدوده‌ی خط عربی/فارسی است؟ */
-function isArabicChar(ch: string): boolean {
-  const c = ch.codePointAt(0) ?? 0;
-  return (c >= 0x0600 && c <= 0x06ff) || (c >= 0xfb50 && c <= 0xfdff) || (c >= 0xfe70 && c <= 0xfeff);
-}
-
-/** رقم (فارسی ۰-۹، عربی ٠-٩ یا لاتین 0-9)؟ — هرگز نباید برعکس شود
- *  ⚠️ PersianShaper ارقام فارسی را به Arabic-Indic (٠-٩) تبدیل می‌کند! */
-function isDigitChar(ch: string): boolean {
-  const c = ch.codePointAt(0) ?? 0;
-  return (c >= 0x30 && c <= 0x39) || (c >= 0x06f0 && c <= 0x06f9) || (c >= 0x0660 && c <= 0x0669);
-}
-
-/**
- * تبدیل متن فارسی به رشته‌ی قابل رسم در PDF (که LTR رسم می‌شود):
- * ۱) شکل‌دهی حروف (اتصال‌ها + لام‌الف) با PersianShaper
- * ۲) bidi ساده‌ی سطح-رانی: هر کاراکتر خنثی (فاصله/نقطه‌گذاری) جهتِ همسایه‌اش را می‌گیرد؛
- *    اگر همسایه‌ها مخلوط باشند جهتِ پاراگراف (RTL)؛ ارقام و لاتین هرگز برعکس نمی‌شوند.
- *    در نهایت ترتیب ران‌ها برعکس و حروفِ ران‌های RTL هم برعکس می‌شوند.
- */
-type Dir = "R" | "L";
-
-function classifyChar(ch: string): "R" | "L" | "N" {
-  if (isDigitChar(ch)) return "L"; // ارقام (فارسی/لاتین) همیشه به‌عنوان قطعه‌ی چپ‌به‌راست
-  if (isArabicChar(ch)) return "R";
-  if (/[A-Za-z]/.test(ch)) return "L";
-  return "N"; // فاصله، دونقطه، خط تیره، | و ...
-}
-
-export function faToDrawable(text: string): string {
-  const shaped = PersianShaper.convertArabic(text).replace(/\u200c/g, "");
-  const chars = [...shaped];
-  const cls = chars.map(classifyChar);
-
-  const dirs: Dir[] = cls.map((c, i) => {
-    if (c !== "N") return c;
-    let prev: "R" | "L" | null = null;
-    let next: "R" | "L" | null = null;
-    for (let j = i - 1; j >= 0; j--) if (cls[j] !== "N") { prev = cls[j] as "R" | "L"; break; }
-    for (let j = i + 1; j < cls.length; j++) if (cls[j] !== "N") { next = cls[j] as "R" | "L"; break; }
-    if (prev && next) return prev === next ? prev : "R"; // مخلوط → جهت پاراگراف (RTL)
-    return prev ?? next ?? "R";
-  });
-
-  const runs: { rtl: boolean; chars: string[] }[] = [];
-  chars.forEach((ch, i) => {
-    const rtl = dirs[i] === "R";
-    const last = runs[runs.length - 1];
-    if (last && last.rtl === rtl) last.chars.push(ch);
-    else runs.push({ rtl, chars: [ch] });
-  });
-
-  const out: string[] = [];
-  for (let i = runs.length - 1; i >= 0; i--) {
-    const r = runs[i];
-    out.push(r.rtl ? r.chars.reverse().join("") : r.chars.join(""));
-  }
-  return out.join("");
-}
-
-/**
- * ⚠️ نکته‌ی حیاتی pdf-lib: متد layout فونت‌کیت برای متن‌های دارای حروف عربی/فارسی
- * «کل رشته را برعکس می‌کند». پس ما هم از قبل کل drawable را برعکس می‌دهیم تا
- * خروجی نهایی دقیقاً همان ترتیب بصریِ درست شود.
- */
-export function faForPdfLib(text: string): string {
-  const d = faToDrawable(text);
-  return /[\u0600-\u06FF\uFB50-\uFDFF\uFE70-\uFEFF]/.test(d) ? [...d].reverse().join("") : d;
-}
-
-function b64ToBytes(b64: string): Uint8Array {
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return bytes;
-}
-
-const INK = rgb(0.11, 0.13, 0.17);
-const GRAY = rgb(0.45, 0.5, 0.56);
-const ACCENT = rgb(0.96, 0.55, 0.11);
-
-export async function buildPdfReport(m: ReportModel): Promise<Uint8Array> {
-  const pdf = await PDFDocument.create();
-  pdf.registerFontkit(fontkit);
-  const font = await pdf.embedFont(b64ToBytes(VAZIR_TTF_B64), { subset: false });
-
-  const W = 595.28, H = 841.89, M = 48; // A4 + حاشیه
-  let page = pdf.addPage([W, H]);
-  let y = H - M;
-
-  const draw = (text: string, size: number, xRight: number, color = INK, bold = false) => {
-    page.drawText(faForPdfLib(text), { x: xRight, y, size, font, color });
-    void bold;
+function buildList(m: ReportModel): string {
+  const head = [
+    "<th>شناسه</th>",
+    "<th>عنوان</th>",
+    "<th>وضعیت</th>",
+    "<th>شروع</th>",
+    "<th>پایان</th>",
+    ...(m.multiUser ? ["<th>مسئول</th>"] : []),
+  ].join("");
+  const userName = (t: TaskRow) => {
+    const u = m.users.find((x) => x.id === t.assignee_id);
+    return u ? u.name : "—";
   };
-  const width = (text: string, size: number) => font.widthOfTextAtSize(faForPdfLib(text), size);
-  const right = (text: string, size: number, color = INK) => draw(text, size, W - M - width(text, size), color);
-  const ensureSpace = (need: number) => {
-    if (y - need < M) {
-      page = pdf.addPage([W, H]);
-      y = H - M;
-    }
-  };
-
-  // سربرگ
-  right("گزارش تسک‌ها", 24);
-  y -= 22;
-  right(`برای: ${m.name}`, 12, GRAY);
-  y -= 16;
-  right(m.nowFa, 10, GRAY);
-  y -= 8;
-  page.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: 1.2, color: ACCENT });
-  y -= 22;
-
-  const inProgress = m.open.filter((t) => t.status === "in_progress");
-  const notStarted = m.open.filter((t) => t.status === "not_started");
-  right(
-    `جمع‌بندی: ${m.total} تسک — ${inProgress.length} در حال انجام، ${notStarted.length} شروع‌نشده، ${m.done.length} تمام‌شده`,
-    11
+  const rows = m.tasks
+    .map((t) => {
+      const cells = [
+        `<td class="num">${faDigits(t.id)}</td>`,
+        `<td class="ttl">${escapeHtml(t.title)}${t.description ? `<div class="desc">${escapeHtml(t.description)}</div>` : ""}</td>`,
+        `<td>${statusChip(t)}</td>`,
+        `<td>${t.start_date ? fmtDate(t.start_date) : "—"}</td>`,
+        `<td class="${isOverdue(m, t) ? "over" : ""}">${dueText(t)}</td>`,
+        ...(m.multiUser ? [`<td>${escapeHtml(userName(t))}</td>`] : []),
+      ];
+      return `<tr>${cells.join("")}</tr>`;
+    })
+    .join("\n");
+  const empty = m.tasks.length
+    ? ""
+    : `<div class="empty">تسکی نیست — از زندگی لذت ببر 🎉</div>`;
+  return page(
+    m,
+    "📋 فهرست تسک‌ها",
+    `${empty}
+  <div class="tblwrap">
+  <table>
+    <thead><tr>${head}</tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+  </div>
+  <style>
+    .tblwrap{overflow-x:auto}
+    table{width:100%;border-collapse:collapse;font-size:13px}
+    th{font-size:12px;color:var(--ink-2);text-align:right;padding:var(--sp-1);border-bottom:2px solid var(--ink)}
+    td{padding:10px var(--sp-1);border-bottom:1px solid var(--line);vertical-align:top}
+    tbody tr:hover{background:var(--surface)}
+    .num{color:var(--ink-3);font-size:12px;white-space:nowrap}
+    .ttl{font-weight:600;min-width:200px}
+    .desc{color:var(--ink-3);font-size:12px;font-weight:400;margin-top:2px}
+    .empty{padding:var(--sp-4);text-align:center;color:var(--ink-3)}
+  </style>`
   );
-  y -= 26;
+}
 
-  const section = (title: string, rows: TaskRow[]) => {
-    if (!rows.length) return;
-    ensureSpace(40);
-    right(title, 15);
-    y -= 20;
-    for (const t of rows) {
-      const { main, meta } = taskLine(t);
-      ensureSpace(58);
-      right(main, 12);
-      y -= 15;
-      right(meta, 9, GRAY);
-      y -= 15;
-      right(`شناسه: ${t.id}`, 9, GRAY);
-      y -= 17;
-      page.drawLine({
-        start: { x: M, y: y + 6 },
-        end: { x: W - M, y: y + 6 },
-        thickness: 0.4,
-        color: rgb(0.85, 0.87, 0.9),
-      });
-      y -= 8;
-    }
-    y -= 10;
-  };
+// ============================================================
+// ۲) گزارش‌طور (تحریریه‌ای)
+// ============================================================
 
-  section("تسک‌های باز", notStarted);
-  section("در حال انجام", inProgress);
-  section("تمام‌شده", m.done);
+function buildReport(m: ReportModel): string {
+  const entry = (t: TaskRow, i: number) => `
+    <article class="entry">
+      <div class="no">${faDigits(i)}</div>
+      <div class="body">
+        <h3>${escapeHtml(t.title)}</h3>
+        ${t.description ? `<p>${escapeHtml(t.description)}</p>` : ""}
+        <div class="meta">
+          ${statusChip(t)}
+          <span>شروع: ${t.start_date ? fmtDate(t.start_date) : "—"}</span>
+          <span class="${isOverdue(m, t) ? "over" : ""}">پایان: ${dueText(t)}</span>
+          <span>شناسه: ${faDigits(t.id)}</span>
+          ${m.multiUser ? `<span>مسئول: ${escapeHtml(m.users.find((x) => x.id === t.assignee_id)?.name ?? "—")}</span>` : ""}
+        </div>
+      </div>
+    </article>`;
 
-  ensureSpace(30);
-  y = M + 8;
-  right("ساخته‌شده توسط احمق‌ایجنت", 8, GRAY);
+  const section = (label: string, rows: TaskRow[]) =>
+    rows.length
+      ? `\n  <section><h2>${label} <span class="count">${faDigits(rows.length)}</span></h2>${rows.map(entry).join("")}</section>`
+      : "";
 
-  return pdf.save();
+  return page(
+    m,
+    "📄 گزارش تسک‌ها",
+    `
+  <div class="summary">
+    جمع‌بندی: <b>${faDigits(m.total)}</b> تسک —
+    <b>${faDigits(m.inProgress.length)}</b> در حال انجام،
+    <b>${faDigits(m.notStarted.length)}</b> شروع‌نشده،
+    <b>${faDigits(m.done.length)}</b> تمام‌شده
+    ${m.overdue.length ? `· <span class="over">${faDigits(m.overdue.length)} سررسید گذشته</span>` : ""}
+  </div>
+  ${section("⏳ در حال انجام", m.inProgress)}
+  ${section("🔓 شروع‌نشده", m.notStarted)}
+  ${section("✅ تمام‌شده", m.done)}
+  <style>
+    .summary{border:1px solid var(--ink);border-radius:var(--r-m);padding:var(--sp-2);font-size:14px;margin-bottom:var(--sp-3)}
+    section{margin-bottom:var(--sp-3)}
+    h2{font-size:17px;margin-bottom:var(--sp-2);display:flex;align-items:center;gap:var(--sp-1)}
+    .count{border:1px solid var(--line-strong);border-radius:999px;font-size:12px;padding:0 10px;color:var(--ink-2)}
+    .entry{display:flex;gap:var(--sp-2);padding:var(--sp-2) 0;border-bottom:1px solid var(--line)}
+    .no{font-size:20px;font-weight:800;color:var(--ink-3);min-width:32px;line-height:1.2}
+    h3{font-size:15px}
+    .body p{color:var(--ink-2);font-size:13px;margin-top:2px}
+    .meta{display:flex;flex-wrap:wrap;gap:var(--sp-1) var(--sp-2);margin-top:var(--sp-1);font-size:12px;color:var(--ink-3)}
+  </style>`
+  );
+}
+
+// ============================================================
+// ۳) داشبورد (KPI + نمودار SVG)
+// ============================================================
+
+/** دوناتِ وضعیت — رنگ‌ها فقط اینجا */
+function donutSvg(m: ReportModel): string {
+  const segs = [
+    { n: m.done.length, c: "var(--c-done)" },
+    { n: m.inProgress.length, c: "var(--c-doing)" },
+    { n: m.notStarted.length, c: "var(--c-todo)" },
+  ];
+  const total = Math.max(m.total, 1);
+  const R = 44;
+  const C = 2 * Math.PI * R;
+  let acc = 0;
+  const circles = segs
+    .map((sg) => {
+      const frac = sg.n / total;
+      const len = frac * C;
+      const el = `<circle r="${R}" cx="60" cy="60" fill="none" stroke="${sg.c}" stroke-width="14"
+        stroke-dasharray="${len.toFixed(2)} ${(C - len).toFixed(2)}" stroke-dashoffset="${(-acc).toFixed(2)}"
+        transform="rotate(-90 60 60)"/>`;
+      acc += len;
+      return el;
+    })
+    .join("");
+  return `<svg viewBox="0 0 120 120" class="donut" role="img" aria-label="توزیع وضعیت تسک‌ها">
+    ${circles}
+    <text x="60" y="56" text-anchor="middle" class="dt">${faDigits(m.total)}</text>
+    <text x="60" y="74" text-anchor="middle" class="dl">تسک</text>
+  </svg>`;
+}
+
+/** نمودار میله‌ای افقی — به ازای کاربر (یا وضعیت در حالت تک‌کاربر) */
+function barsSvg(m: ReportModel): { title: string; body: string } {
+  const rows = m.multiUser
+    ? m.users.slice(0, 8).map((u) => ({ label: u.name, n: u.tasks.length }))
+    : [
+        { label: "در حال انجام", n: m.inProgress.length },
+        { label: "شروع‌نشده", n: m.notStarted.length },
+        { label: "تمام‌شده", n: m.done.length },
+      ];
+  const max = Math.max(...rows.map((r) => r.n), 1);
+  const bars = rows
+    .map((r, i) => {
+      const w = Math.round((r.n / max) * 100);
+      return `<div class="brow">
+        <span class="blabel">${escapeHtml(r.label)}</span>
+        <span class="btrack"><span class="bfill c${i % 3}" style="width:${w}%"></span></span>
+        <span class="bval">${faDigits(r.n)}</span>
+      </div>`;
+    })
+    .join("");
+  return { title: m.multiUser ? "تسک به ازای هر کاربر" : "توزیع وضعیت", body: bars };
+}
+
+function buildDash(m: ReportModel): string {
+  const kpis = [
+    { label: "مجموع", n: m.total },
+    { label: "باز", n: m.open.length },
+    { label: "در حال انجام", n: m.inProgress.length },
+    { label: "تمام‌شده", n: m.done.length },
+  ];
+  const kpiHtml = kpis
+    .map(
+      (k) => `<div class="kpi"><div class="kn">${faDigits(k.n)}</div><div class="kl">${k.label}</div></div>`
+    )
+    .join("");
+
+  const legend = [
+    { c: "done", label: "تمام‌شده", n: m.done.length },
+    { c: "doing", label: "در حال انجام", n: m.inProgress.length },
+    { c: "todo", label: "شروع‌نشده", n: m.notStarted.length },
+  ]
+    .map((l) => `<li><i class="dot ${l.c}"></i>${l.label} — <b>${faDigits(l.n)}</b></li>`)
+    .join("");
+
+  const bars = barsSvg(m);
+
+  const nearest = [...m.open]
+    .filter((t) => t.due_date)
+    .sort((a, b) => {
+      const f = (t: TaskRow) => (t.due_at ? Date.parse(t.due_at) : Date.parse(`${t.due_date}T23:59:59+03:30`));
+      return f(a) - f(b);
+    })
+    .slice(0, 5);
+  const nearestHtml = nearest.length
+    ? `<table class="mini"><tbody>${nearest
+        .map(
+          (t) =>
+            `<tr><td class="ttl">${escapeHtml(t.title)}</td><td class="${isOverdue(m, t) ? "over" : ""}">${dueText(t)}</td></tr>`
+        )
+        .join("")}</tbody></table>`
+    : `<div class="empty2">ددلاینِ پیش‌رویی نیست 🎉</div>`;
+
+  const overdueBox = m.overdue.length
+    ? `<div class="alert">⚠️ ${faDigits(m.overdue.length)} تسک از سررسیدشان گذشته‌اند!</div>`
+    : "";
+
+  return page(
+    m,
+    "📊 داشبورد تسک‌ها",
+    `
+  <div class="kpis">${kpiHtml}</div>
+  ${overdueBox}
+  <div class="grid">
+    <div class="panel">
+      <h2>توزیع وضعیت</h2>
+      <div class="donutwrap">${donutSvg(m)}<ul class="legend">${legend}</ul></div>
+    </div>
+    <div class="panel">
+      <h2>${bars.title}</h2>
+      ${bars.body}
+    </div>
+  </div>
+  <div class="panel">
+    <h2>⏰ نزدیک‌ترین ددلاین‌ها</h2>
+    ${nearestHtml}
+  </div>
+  <style>
+    .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:var(--sp-1);margin-bottom:var(--sp-2)}
+    .kpi{border:1px solid var(--line);border-radius:var(--r-m);padding:var(--sp-2);text-align:center}
+    .kn{font-size:30px;font-weight:800;line-height:1.2}
+    .kl{font-size:12px;color:var(--ink-2)}
+    .alert{border:1px solid var(--c-over);color:var(--c-over);border-radius:var(--r-m);padding:10px var(--sp-2);margin-bottom:var(--sp-2);font-weight:700}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:var(--sp-2);margin-bottom:var(--sp-2)}
+    .panel{border:1px solid var(--line);border-radius:var(--r-m);padding:var(--sp-2)}
+    .panel h2{font-size:14px;margin-bottom:var(--sp-2)}
+    .donutwrap{display:flex;align-items:center;gap:var(--sp-3);flex-wrap:wrap;justify-content:center}
+    .donut{width:150px;height:150px}
+    .donut .dt{font-size:26px;font-weight:800;fill:var(--ink)}
+    .donut .dl{font-size:10px;fill:var(--ink-3)}
+    .legend{list-style:none;font-size:13px;display:grid;gap:6px}
+    .dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-inline-end:6px}
+    .dot.done{background:var(--c-done)} .dot.doing{background:var(--c-doing)} .dot.todo{background:var(--c-todo)}
+    .brow{display:grid;grid-template-columns:96px 1fr 32px;align-items:center;gap:var(--sp-1);margin-bottom:10px;font-size:12px}
+    .blabel{color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .btrack{background:var(--surface);border:1px solid var(--line);border-radius:999px;height:14px;overflow:hidden}
+    .bfill{display:block;height:100%;border-radius:999px}
+    .bfill.c0{background:var(--c-doing)} .bfill.c1{background:var(--c-done)} .bfill.c2{background:var(--c-warn)}
+    .bval{font-weight:700;text-align:left}
+    .mini{width:100%;border-collapse:collapse;font-size:13px}
+    .mini td{padding:8px 0;border-bottom:1px solid var(--line)}
+    .mini .ttl{font-weight:600}
+    .empty2{color:var(--ink-3);padding:var(--sp-2) 0}
+  </style>`
+  );
+}
+
+// ============================================================
+// ورودی اصلی
+// ============================================================
+
+export function buildHtmlReport(m: ReportModel, style: ExportStyle): string {
+  if (style === "list") return buildList(m);
+  if (style === "dash") return buildDash(m);
+  return buildReport(m);
 }

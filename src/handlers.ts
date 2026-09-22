@@ -12,6 +12,7 @@ import {
   findUserByLogin,
   findUserByName,
   findUserByUsername,
+  findUsersByName,
   getPendingEdit,
   getPendingTask,
   getTask,
@@ -26,6 +27,7 @@ import {
   deleteUser,
   setLoggedIn,
   savePendingTask,
+  setAlias,
   getPendingAuth,
   deletePendingAuth,
   setTaskFields,
@@ -36,7 +38,8 @@ import { extractDueDateTime, extractTask } from "./ai";
 import type { ParsedTask } from "./types";
 import { detectExportRequest, detectListRequest, detectUserTasksQuery } from "./intent";
 import { cmdRegister, cmdWhoami, completeAuth, validateAuthUsername } from "./auth";
-import { buildHtmlReport, buildPdfReport, buildReportModel, exportKeyboard } from "./exporter";
+import { STYLE_LABEL, buildHtmlReport, buildReportModel } from "./exporter";
+import type { ExportStyle } from "./exporter";
 import { answerCallbackQuery, editMessageText, escapeHtml, sendDocument, sendMessage } from "./telegram";
 import {
   STATUS_EMOJI,
@@ -46,6 +49,7 @@ import {
   parseStatus,
   statusKeyboard,
   taskCard,
+  userLabel,
   truncate,
 } from "./format";
 import {
@@ -80,7 +84,7 @@ const WELCOME = `سلام! من <b>احمق‌ایجنت</b> هستم 🤖
 
 با رسیدن تاریخ شروع، تسک خودکار «در حال انجام» می‌شه و تا تمومش نکنی هم یادآوری می‌کنم 😈
 
-👑 /register &lt;نام‌کاربری&gt; &lt;رمز&gt; — ثبت‌نام (با مشخصات ادمین → ادمین!)
+👑 /register &lt;نام‌کاربری&gt; &lt;رمز&gt; [اسم مستعار] — ثبت‌نام (با مشخصات ادمین → ادمین!)
 
 از منوی پایین هم می‌تونی استفاده کنی 👇 (/menu)
 /help — همه‌ی دستورها`;
@@ -105,10 +109,11 @@ const HELP = `🤖 <b>راهنمای احمق‌ایجنت</b>
 /assign &lt;شناسه&gt; @یوزرنیم — واگذاری به کس دیگه
 /edit &lt;شناسه&gt; &lt;فیلد&gt;: &lt;مقدار&gt; — ویرایش (عنوان/توضیح/مسئول/شروع/پایان/وضعیت)
 /delete &lt;شناسه&gt; — حذف تسک
-/register &lt;نام‌کاربری&gt; &lt;رمز&gt; — ثبت‌نام 👑 (با مشخصات ادمین → نقش ادمین)
+/register &lt;نام‌کاربری&gt; &lt;رمز&gt; [اسم مستعار] — ثبت‌نام 👑 (با مشخصات ادمین → نقش ادمین)
+/alias &lt;اسم&gt; — اسم مستعارت (به جای @؛ ادمین با آن برایت تسک می‌سازد)
 /whoami — حساب و نقش من
 /logout — خروج از حساب 🚪
-/export — خروجی گزارشی از تسک‌ها (HTML یا PDF)
+/export — خروجی گزارشی HTML با سه شکل: 📋 لیستی (جدول) · 📄 گزارش‌طور · 📊 داشبورد
 /menu — منوی دکمه‌ای 🎛 (🗂 مدیریت تسک · 📊 گزارش · 🚪 خروج + ادمین: 👥 کاربرها · 🌐 تسک‌های همه · 🗑 حذف کاربر)
 /help — همین راهنما
 
@@ -124,6 +129,7 @@ const HELP = `🤖 <b>راهنمای احمق‌ایجنت</b>
 • با رسیدن زمان شروع، وضعیت خودکار «در حال انجام» می‌شه 🚦
 • در چت خصوصی بدون هیچ کلیدواژه‌ای همه‌چیز فهمیده می‌شود (در گروه: با «احمق» یا منشن)
 • فقط ادمین می‌تونه برای دیگه‌ها تسک بسازه؛ بقیه برای خودشون
+• اسم مستعار: هر کاربر یک اسم مستعار دارد (مثل «ایمان») — «برای ایمان یه تسک بساز». اگر چند نفر هم‌نام باشند، می‌پرسم کدوم
 • 🔔 یادآوری داینامیک: موقع ساخت بگو چطور یادت بزنیم — «هر روز ساعت ۸ صبح»، «هر ۳ ساعت»، «۱ ساعت قبل از ددلاین»، «فردا ساعت ۱۰ یادم بنداز» یا «یادآوری نکن». با /edit هم عوض می‌شه.
 • ادمین: «تسک‌های علی چیا هستن؟» یا /menu ← 👥 کاربرها`;
 
@@ -201,6 +207,34 @@ async function tryPendingAuthReply(env: Env, msg: any, text: string): Promise<bo
     await sendMessage(env, msg.chat.id, `🔒 حالا <b>رمز عبور</b> خود را وارد کن${pa.mode === "register" ? " (حداقل ۴ کاراکتر)" : ""}:`);
     return true;
   }
+  // گامِ اسم مستعار (فقط ثبت‌نام — بعد از ساخته‌شدن حساب)
+  if (pa.step === "alias") {
+    if (clean.startsWith("/") || isMenuLabel(clean)) {
+      await deletePendingAuth(env, msg.from.id);
+      return false; // دستور/دکمه‌ی منو بود → مسیر عادی ادامه یابد
+    }
+    await deletePendingAuth(env, msg.from.id);
+    const meA = await getUser(env, msg.from.id);
+    if (CANCEL_RE.test(clean) || clean === "-") {
+      await sendMessage(
+        env,
+        msg.chat.id,
+        "👌 بدون اسم مستعار. هر وقت خواستی: <code>/alias اسم</code>",
+        { reply_markup: mainKeyboard(meA?.role === "admin") }
+      );
+      return true;
+    }
+    const alias = clean.slice(0, 40);
+    await setAlias(env, msg.from.id, alias);
+    await sendMessage(
+      env,
+      msg.chat.id,
+      `🎭 اسم مستعارت شد: <b>${escapeHtml(alias)}</b>\nادمین حالا می‌تونه بگه «برای ${escapeHtml(alias)} یه تسک بساز» 👌`,
+      { reply_markup: mainKeyboard(meA?.role === "admin") }
+    );
+    return true;
+  }
+
   // گامِ رمز
   const pass = clean.split(/\s+/)[0];
   const result = await completeAuth(env, msg.from.id, pa.mode as "register" | "login", pa.username, pass);
@@ -208,7 +242,18 @@ async function tryPendingAuthReply(env: Env, msg: any, text: string): Promise<bo
     await deletePendingAuth(env, msg.from.id);
     await setLoggedIn(env, msg.from.id, true);
     const me = await getUser(env, msg.from.id);
-    await sendMessage(env, msg.chat.id, result, { reply_markup: mainKeyboard(me?.role === "admin") });
+    if (pa.mode === "register") {
+      // 🎭 گام بعدی: اسم مستعار (به جای @)
+      await savePendingAuth(env, msg.from.id, msg.chat.id, "register", "alias", pa.username);
+      await sendMessage(
+        env,
+        msg.chat.id,
+        `${result}\n\n🎭 <b>اسم مستعارت چیه؟</b>\nاین اسم را ادمین به جای @ برای واگذاری تسک به تو می‌بیند (مثلاً: ایمان).\n(اگه فعلاً نمی‌خوای، بفرست: -)`,
+        { reply_markup: mainKeyboard(me?.role === "admin") }
+      );
+    } else {
+      await sendMessage(env, msg.chat.id, result, { reply_markup: mainKeyboard(me?.role === "admin") });
+    }
   } else {
     await sendMessage(env, msg.chat.id, result);
     if (result.includes("گرفته شده")) {
@@ -374,7 +419,7 @@ async function sendDeleteUserList(env: Env, msg: any): Promise<void> {
     .all<{ user_id: number; first_name: string | null; username: string | null; role: string }>();
   const kb = (rows.results ?? []).map((u) => [
     {
-      text: `${u.role === "admin" ? "👑" : "👤"} ${u.first_name ?? "?"}${u.username ? ` (@${u.username})` : ""}`,
+      text: `${u.role === "admin" ? "👑" : "👤"} ${userLabel(u)}`,
       callback_data: `delu|${u.user_id}`,
     },
   ]);
@@ -396,7 +441,7 @@ async function sendUserPickList(env: Env, msg: any, callbackPrefix: string, head
     .all<{ user_id: number; first_name: string | null; username: string | null; role: string }>();
   const kb = (rows.results ?? []).map((u) => [
     {
-      text: `${u.role === "admin" ? "👑" : "👤"} ${u.first_name ?? "?"}${u.username ? ` (@${u.username})` : ""}`,
+      text: `${u.role === "admin" ? "👑" : "👤"} ${userLabel(u)}`,
       callback_data: `${callbackPrefix}|${u.user_id}`,
     },
   ]);
@@ -417,7 +462,7 @@ async function sendUserList(env: Env, msg: any): Promise<void> {
   const list = (rows.results ?? [])
     .map((u) => [
       {
-        text: `${u.role === "admin" ? "👑" : "👤"} ${u.first_name ?? "?"}${u.username ? ` (@${u.username})` : ""}`,
+        text: `${u.role === "admin" ? "👑" : "👤"} ${userLabel(u)}`,
         callback_data: `usr|${u.user_id}`,
       },
     ]);
@@ -433,7 +478,7 @@ async function sendUserList(env: Env, msg: any): Promise<void> {
 /** تسک‌های همه‌ی کاربرها + نزدیک‌ترین ددلاین‌ها (ادمین) */
 async function sendAllUsersTasks(env: Env, msg: any): Promise<void> {
   const rows = await env.DB.prepare(
-    `SELECT t.*, u.first_name AS u_name FROM tasks t JOIN users u ON u.user_id = t.assignee_id
+    `SELECT t.*, COALESCE(u.alias, u.first_name, u.username, '#' || u.user_id) AS u_name FROM tasks t JOIN users u ON u.user_id = t.assignee_id
      WHERE t.status != 'done' ORDER BY COALESCE(t.due_at, t.due_date || 'T23:59:59+03:30') ASC LIMIT 30`
   ).all<TaskRow & { u_name: string | null }>();
   const tasks = rows.results ?? [];
@@ -654,6 +699,20 @@ async function onCommand(env: Env, msg: any, text: string): Promise<void> {
         "🚪 از حسابت خارج شدی.\nثبت‌نامت پابرجاست — با «ورود» و همان یوزرنیم/رمز برمی‌گردی. هر وقت خواستی: /start"
       );
       return;
+    case "/alias": {
+      const a = arg.trim().slice(0, 40);
+      if (!a) {
+        await sendMessage(
+          env,
+          chatId,
+          "🎭 شکل درست: <code>/alias اسم</code>\nاسم مستعار، چیزی است که ادمین به جای @ برای واگذاری تسک به تو می‌بیند."
+        );
+        return;
+      }
+      await setAlias(env, msg.from.id, a);
+      await sendMessage(env, chatId, `🎭 اسم مستعارت شد: <b>${escapeHtml(a)}</b>`);
+      return;
+    }
     case "/whoami":
       await cmdWhoami(env, msg);
       return;
@@ -730,9 +789,25 @@ async function createTaskFromText(
           // ناشناس هم عبور می‌دهد تا ادمین لیست انتخاب کاربر را ببیند
           if (known || isAdmin) parsed.assignee_name = ref;
         } else {
-          const known = await findUserByName(env, ref);
-          // برای ادمین، نامِ ناشناس هم عبور می‌کند تا انتخابگر باز شود
-          if (known || isAdmin) parsed.assignee_name = ref;
+          const matches = await findUsersByName(env, ref);
+          if (matches.length === 1) {
+            parsed.assignee_name = ref;
+          } else if (matches.length > 1 && isAdmin && !forcedAssigneeId) {
+            // 🤔 چند نفر هم‌نام/هم‌مستعار → ادمین انتخاب می‌کند، بعد همان متن ساخته می‌شود
+            await savePendingPick(env, msg.from.id, msg.chat.id, 0, text);
+            const kb = matches.slice(0, 10).map((u) => [
+              { text: `👤 ${userLabel(u)}`, callback_data: `asp|${u.user_id}` },
+            ]);
+            await sendMessage(env, msg.chat.id, `🤔 چند تا «${escapeHtml(ref)}» داریم! کدومشون منظورته؟`, {
+              reply_markup: { inline_keyboard: kb },
+            });
+            return;
+          } else if (matches.length > 1) {
+            parsed.assignee_name = ref; // غیرادمین: به‌هرحال خودش مسئول می‌شود
+          } else if (isAdmin) {
+            // نامِ ناشناس → انتخابگر همه‌ی کاربرها باز شود
+            parsed.assignee_name = ref;
+          }
         }
       }
     }
@@ -983,6 +1058,11 @@ const PICK_TTL_MS = 10 * 60_000; // انتخاب کاربر برای تسک جد
 async function tryPendingPickReply(env: Env, msg: any, text: string): Promise<boolean> {
   const pp = await getPendingPick(env, msg.from.id);
   if (!pp) return false;
+  if (!pp.assignee_id) {
+    // ردیفِ ابهام‌زداییِ مانده (کاربر انتخاب‌نشده) → بی‌اثر
+    await deletePendingPick(env, msg.from.id);
+    return false;
+  }
   if (Date.now() - Date.parse(pp.created_at) > PICK_TTL_MS) {
     await deletePendingPick(env, msg.from.id);
     return false;
@@ -1357,29 +1437,77 @@ function byNearestDeadline(a: TaskRow, b: TaskRow): number {
 // ============================================================
 
 async function cmdExport(env: Env, msg: any): Promise<void> {
-  await sendMessage(
-    env,
-    msg.chat.id,
-    "📤 خروجی رو با چه فرمتی می‌خواهی؟",
-    { reply_markup: exportKeyboard(msg.from.id) }
-  );
+  const me = await getUser(env, msg.from.id);
+  if (me?.role === "admin") {
+    // 👑 ادمین: اول بپرس برای کی؟
+    await sendMessage(env, msg.chat.id, "📊 گزارش برای کی می‌خوای؟", {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "🧑 خودم", callback_data: "exp|me|0" }, { text: "👤 کاربر خاص…", callback_data: "exp|pick|0" }],
+          [{ text: "👥 همه‌ی کاربرها", callback_data: "exp|all|0" }],
+        ],
+      },
+    });
+  } else {
+    await sendExportStyleKeyboard(env, msg.chat.id, "me", 0, "📊 گزارشت رو با چه شکلی می‌خوای؟");
+  }
 }
 
-async function doExport(env: Env, fromId: number, chatId: number, fmt: string): Promise<void> {
+/** کیبورد انتخاب شکل خروجی: لیستی / گزارش / داشبورد */
+async function sendExportStyleKeyboard(env: Env, chatId: number, scope: string, uid: number, header: string): Promise<void> {
+  await sendMessage(env, chatId, header, {
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: "📋 لیستی (جدول)", callback_data: `exp|${scope}|${uid}|list` },
+          { text: "📄 گزارش‌طور", callback_data: `exp|${scope}|${uid}|report` },
+          { text: "📊 داشبورد", callback_data: `exp|${scope}|${uid}|dash` },
+        ],
+      ],
+    },
+  });
+}
+
+async function doExport(env: Env, fromId: number, chatId: number, scope: string, uid: number, style: string): Promise<void> {
   try {
-    const user = await getUser(env, fromId);
-    const tasks = await listTasks(env, { involved: fromId });
-    const model = buildReportModel(tasks, user?.first_name || "کاربر");
-    const name = (user?.first_name || "user").replace(/[^a-zA-Z0-9_-]+/g, "_") || "user";
-    if (fmt === "pdf") {
-      const pdf = await buildPdfReport(model);
-      await sendDocument(env, chatId, pdf, `tasks-${name}.pdf`, "application/pdf",
-        `📄 گزارش تسک‌های شما (${faDigits(model.total)} تسک)`);
+    const me = await getUser(env, fromId);
+    const st = (["list", "report", "dash"].includes(style) ? style : "report") as ExportStyle;
+    let tasks: TaskRow[];
+    let scopeName: string;
+    let usersInfo: { id: number; name: string }[] | undefined;
+    if (scope === "usr") {
+      const target = await getUser(env, uid);
+      if (!target) {
+        await sendMessage(env, chatId, "کاربر پیدا نشد.");
+        return;
+      }
+      tasks = await listTasks(env, { assignee: uid });
+      scopeName = displayName(target);
+    } else if (scope === "all") {
+      const rows = await env.DB.prepare(
+        "SELECT user_id, alias, first_name, username FROM users ORDER BY updated_at DESC LIMIT 100"
+      ).all<{ user_id: number; alias: string | null; first_name: string | null; username: string | null }>();
+      usersInfo = (rows.results ?? []).map((u) => ({ id: u.user_id, name: userLabel(u) }));
+      tasks = await listTasks(env, {});
+      scopeName = "همه‌ی کاربرها";
     } else {
-      const html = buildHtmlReport(model);
-      await sendDocument(env, chatId, html, `tasks-${name}.html`, "text/html; charset=utf-8",
-        `🌐 گزارش تسک‌های شما (${faDigits(model.total)} تسک) — تو مرورگر باز کن`);
+      tasks = await listTasks(env, { involved: fromId });
+      scopeName = displayName(me);
     }
+    const model = buildReportModel(tasks, scopeName, usersInfo);
+    const html = buildHtmlReport(model, st);
+    const name =
+      scope === "all"
+        ? "all-users"
+        : scopeName.replace(/[^a-zA-Z0-9_-]+/g, "_").slice(0, 24) || `user-${uid}`;
+    await sendDocument(
+      env,
+      chatId,
+      html,
+      `tasks-${name}-${st}.html`,
+      "text/html; charset=utf-8",
+      `📊 ${STYLE_LABEL[st]} — ${scopeName} (${faDigits(model.total)} تسک) — تو مرورگر باز کن`
+    );
   } catch (err) {
     console.error("[export] failed:", err);
     await sendMessage(env, chatId, "❌ ساخت خروجی با خطا مواجه شد. دوباره امتحان کن.");
@@ -1904,6 +2032,31 @@ async function onCallbackQuery(env: Env, cq: any): Promise<void> {
     return;
   }
 
+  // 🤔 رفع ابهامِ هم‌نام‌ها: asp|<user_id> — متن تسک ذخیره شده، الان می‌سازیم
+  if (parts[0] === "asp" && parts.length === 2) {
+    const requester = await getUser(env, from.id);
+    if (requester?.role !== "admin") {
+      await answerCallbackQuery(env, cq.id, "فقط ادمین 👑");
+      return;
+    }
+    const pp = await getPendingPick(env, from.id);
+    if (!pp || !pp.text) {
+      await answerCallbackQuery(env, cq.id, "دیگه چیزی برای ساخت نمونده 🤷");
+      return;
+    }
+    const target = await getUser(env, Number(parts[1]));
+    if (!target) {
+      await answerCallbackQuery(env, cq.id, "کاربر پیدا نشد");
+      return;
+    }
+    await deletePendingPick(env, from.id);
+    await answerCallbackQuery(env, cq.id, `👤 ${target.first_name ?? "?"}`);
+    // پیامِ کال‌بک فاقد from است — یک پیامِ معادل با فرستنده‌ی واقعی می‌سازیم
+    const msg2 = { ...msg, from };
+    await createTaskFromText(env, msg2, pp.text, undefined, target.user_id);
+    return;
+  }
+
   // 👤 انتخاب کاربر برای تسکِ جدید (مسیر «برای @»): asg0|<user_id>
   if (parts[0] === "asg0" && parts.length === 2) {
     const requester = await getUser(env, from.id);
@@ -1966,14 +2119,85 @@ async function onCallbackQuery(env: Env, cq: any): Promise<void> {
     return;
   }
 
-  // خروجی گزارشی: ex|<user_id>|<html|pdf>
+  // 📊 خروجی جدید: exp|<scope>|<uid>[|<style>] — scope: me|usr|pick|all
+  if (parts[0] === "exp") {
+    const meE = await getUser(env, from.id);
+    const isAdminE = meE?.role === "admin";
+    const scope = parts[1] ?? "";
+    const uid = Number(parts[2]) || 0;
+
+    if (parts.length === 3) {
+      if (scope === "pick") {
+        if (!isAdminE) {
+          await answerCallbackQuery(env, cq.id, "فقط ادمین 👑");
+          return;
+        }
+        const rows = await env.DB.prepare(
+          "SELECT user_id, alias, first_name, username FROM users ORDER BY updated_at DESC LIMIT 25"
+        ).all<{ user_id: number; alias: string | null; first_name: string | null; username: string | null }>();
+        const kb = (rows.results ?? []).map((u) => [
+          { text: `👤 ${userLabel(u)}`, callback_data: `exp|usr|${u.user_id}` },
+        ]);
+        await answerCallbackQuery(env, cq.id, "⏳");
+        await sendMessage(env, msg.chat.id, "کدوم کاربر؟", {
+          reply_markup: { inline_keyboard: kb.length ? kb : [[{ text: "کاربری نیست", callback_data: "noop" }]] },
+        });
+        return;
+      }
+      if (scope === "all") {
+        if (!isAdminE) {
+          await answerCallbackQuery(env, cq.id, "فقط ادمین 👑");
+          return;
+        }
+        await answerCallbackQuery(env, cq.id, "⏳");
+        await sendExportStyleKeyboard(env, msg.chat.id, "all", 0, "📊 خروجیِ همه‌ی کاربرها با چه شکلی باشه؟");
+        return;
+      }
+      if (scope === "usr") {
+        if (!isAdminE) {
+          await answerCallbackQuery(env, cq.id, "فقط ادمین 👑");
+          return;
+        }
+        const target = await getUser(env, uid);
+        await answerCallbackQuery(env, cq.id, "⏳");
+        await sendExportStyleKeyboard(env, msg.chat.id, "usr", uid, `📊 گزارشِ ${displayName(target)} با چه شکلی باشه؟`);
+        return;
+      }
+      // me
+      await answerCallbackQuery(env, cq.id, "⏳");
+      await sendExportStyleKeyboard(env, msg.chat.id, "me", 0, "📊 با چه شکلی می‌خوای؟");
+      return;
+    }
+
+    if (parts.length === 4) {
+      if ((scope === "usr" || scope === "all") && !isAdminE) {
+        await answerCallbackQuery(env, cq.id, "فقط ادمین 👑");
+        return;
+      }
+      await answerCallbackQuery(env, cq.id, "⏳ در حال ساخت گزارش...");
+      const finalUid = scope === "usr" ? uid : from.id;
+      await doExport(env, from.id, msg.chat.id, scope, finalUid, parts[3]);
+      return;
+    }
+  }
+
+  // سازگاری با دکمه‌های قدیمی: ex|<user_id>|<html|pdf>
   if (parts[0] === "ex" && parts.length === 3) {
     if (Number(parts[1]) !== from.id) {
       await answerCallbackQuery(env, cq.id, "این دکمه مال شما نیست 🙂");
       return;
     }
+    if (parts[2] === "pdf") {
+      await answerCallbackQuery(env, cq.id, "PDF حذف شد — سه شکل HTML داریم 🌐");
+      await sendMessage(
+        env,
+        msg.chat.id,
+        "📄 دیگه PDF نمی‌سازم — به‌جاش HTML با سه شکل داریم:\n📋 لیستی (جدول) · 📄 گزارش‌طور · 📊 داشبورد\nدوباره بگیر: 📊 گزارش"
+      );
+      return;
+    }
     await answerCallbackQuery(env, cq.id, "⏳ در حال ساخت گزارش...");
-    await doExport(env, from.id, msg.chat.id, parts[2]);
+    await doExport(env, from.id, msg.chat.id, "me", from.id, "list");
     return;
   }
 

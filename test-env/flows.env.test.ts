@@ -29,16 +29,16 @@ describe("📤 خروجی و فلوهای زبانی (محیط ایزوله)", (
     // نه سؤال «تا کی؟» و نه «چی بسازم؟»
     expect(after.slice(before).some((x) => x.includes("تا کی"))).toBe(false);
     expect(after.slice(before).some((x) => x.includes("بسازم"))).toBe(false);
-    // بلکه انتخابگر فرمت با دکمه‌های شیشه‌ای ex|
-    const picker = h.to(ALI.id).filter((m) => m.kind === "message" && JSON.stringify(m.keyboard ?? {}).includes(`ex|${ALI.id}|html`)).at(-1);
+    // بلکه انتخابگرِ شکل خروجی با دکمه‌های شیشه‌ای exp|
+    const picker = h.to(ALI.id).filter((m) => m.kind === "message" && JSON.stringify(m.keyboard ?? {}).includes(`exp|me|0|`)).at(-1);
     expect(picker).toBeTruthy();
-    expect(picker!.text).toContain("فرمت");
+    expect(picker!.text).toContain("شکلی");
   });
 
   it("HTML واقعی می‌رسد: سند با mime درست و محتوای گزارش", async () => {
     await h.say(ALI, "احمق یه تسک بساز: برای اچ‌تی‌ام‌ال، تا فردا");
     await h.say(ALI, "احمق خروجی تسک هام رو بده");
-    await h.callback(ALI, `ex|${ALI.id}|html`);
+    await h.callback(ALI, "exp|me|0|list");
     const docs = h.documents(ALI.id);
     expect(docs.length).toBe(1);
     expect(docs[0].mime).toContain("text/html");
@@ -46,20 +46,57 @@ describe("📤 خروجی و فلوهای زبانی (محیط ایزوله)", (
     expect(docs[0].filename).toMatch(/\.html$/);
   });
 
-  it("PDF واقعی می‌رسد (فونت فارسی embed شده)", async () => {
+  it("داشبورد: نمودار SVG داخل HTML می‌رسد", async () => {
+    await h.say(ALI, "احمق گزارش تسک‌هامو بده");
+    await h.callback(ALI, "exp|me|0|dash");
+    const docs = h.documents(ALI.id);
+    expect(docs.length).toBe(1);
+    expect(docs[0].filename).toMatch(/dash\.html$/);
+  });
+
+  it("دکمه‌ی قدیمی PDF → پیام «PDF حذف شد» به‌جای فایل", async () => {
     await h.say(ALI, "احمق یه تسک بساز: برای پی‌دی‌اف، تا فردا");
     await h.say(ALI, "احمق گزارش تسک‌هامو بده");
     await h.callback(ALI, `ex|${ALI.id}|pdf`);
-    const docs = h.documents(ALI.id);
+    expect(h.documents(ALI.id).length).toBe(0);
+    expect(h.texts(ALI.id).some((x) => x.includes("PDF نمی‌سازم"))).toBe(true);
+  });
+
+  it("ادمین: گزارش سه‌مرحله‌ای — برای کی؟ ← کاربر خاص ← شکل", async () => {
+    await h.say(ASGHAR, "📊 گزارش");
+    const scopeMsg = h.to(ASGHAR.id).filter((m) => m.kind === "message").at(-1)!;
+    expect(scopeMsg.text ?? "").toContain("برای کی");
+    expect(JSON.stringify(scopeMsg.keyboard ?? {})).toContain("exp|pick|0");
+    await h.callback(ASGHAR, "exp|pick|0");
+    const pickMsg = h.to(ASGHAR.id).filter((m) => m.kind === "message").at(-1)!;
+    expect(JSON.stringify(pickMsg.keyboard ?? {})).toContain(`exp|usr|${ALI.id}`);
+    await h.callback(ASGHAR, `exp|usr|${ALI.id}`);
+    const styleMsg = h.to(ASGHAR.id).filter((m) => m.kind === "message").at(-1)!;
+    expect(JSON.stringify(styleMsg.keyboard ?? {})).toContain(`exp|usr|${ALI.id}|dash`);
+    await h.callback(ASGHAR, `exp|usr|${ALI.id}|dash`);
+    const docs = h.documents(ASGHAR.id);
     expect(docs.length).toBe(1);
-    expect(docs[0].mime).toContain("application/pdf");
-    expect(docs[0].size ?? 0).toBeGreaterThan(2000);
-    expect(docs[0].filename).toMatch(/\.pdf$/);
+    expect(docs[0].filename).toContain("dash");
+  });
+
+  it("ادمین: خروجیِ همه‌ی کاربرها — چندکاربره با ستون مسئول", async () => {
+    await h.say(ASGHAR, "📊 گزارش");
+    await h.callback(ASGHAR, "exp|all|0");
+    await h.callback(ASGHAR, "exp|all|0|list");
+    const docs = h.documents(ASGHAR.id);
+    expect(docs.length).toBe(1);
+    expect(docs[0].filename).toMatch(/all.*list\.html$/);
+  });
+
+  it("کاربر عادی نمی‌تواند خروجیِ همه را بگیرد", async () => {
+    await h.callback(ALI, "exp|all|0");
+    expect(h.outbox.some((m) => (m.text ?? "").includes("فقط ادمین") || (m.text ?? "").includes("مال شما نیست"))).toBe(true);
+    expect(h.documents(ALI.id).length).toBe(0);
   });
 
   it("«تاریخچه تسک‌هامو بده» هم به خروجی می‌رود", async () => {
     await h.say(ALI, "احمق تاریخچه تسک‌هامو بده");
-    const picker = h.to(ALI.id).filter((m) => m.kind === "message" && JSON.stringify(m.keyboard ?? {}).includes(`ex|${ALI.id}|`));
+    const picker = h.to(ALI.id).filter((m) => m.kind === "message" && JSON.stringify(m.keyboard ?? {}).includes("exp|me|0|"));
     expect(picker.length).toBeGreaterThan(0);
   });
 

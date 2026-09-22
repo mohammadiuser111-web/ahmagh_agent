@@ -30,13 +30,19 @@ export async function setUserCredentials(
   userId: number,
   usernameLogin: string,
   passwordHash: string,
-  role: string
+  role: string,
+  alias?: string | null
 ): Promise<void> {
   await env.DB.prepare(
-    "UPDATE users SET username_login = ?, password_hash = ?, role = ?, logged_in = 1 WHERE user_id = ?"
+    "UPDATE users SET username_login = ?, password_hash = ?, role = ?, logged_in = 1, alias = COALESCE(?, alias) WHERE user_id = ?"
   )
-    .bind(usernameLogin, passwordHash, role, userId)
+    .bind(usernameLogin, passwordHash, role, alias ?? null, userId)
     .run();
+}
+
+/** اسم مستعار کاربر — چیزی که بقیه به جای @ می‌بینند */
+export async function setAlias(env: Env, userId: number, alias: string): Promise<void> {
+  await env.DB.prepare("UPDATE users SET alias = ? WHERE user_id = ?").bind(alias, userId).run();
 }
 
 /** جستجوی کاربر با نام کاربریِ ثبت‌نام */
@@ -62,24 +68,35 @@ export async function findUserByUsername(env: Env, username: string): Promise<Us
   );
 }
 
+/** همه‌ی کاربرهایی که اسم مستعار یا نامشان با این عبارت match می‌شود (اول: مستعارِ دقیق) */
+export async function findUsersByName(env: Env, name: string): Promise<UserRow[]> {
+  const q = name.trim().toLowerCase();
+  if (!q) return [];
+  const res = await env.DB.prepare(
+    `SELECT * FROM users
+     WHERE (alias IS NOT NULL AND INSTR(LOWER(alias), ?) > 0)
+        OR (first_name IS NOT NULL AND INSTR(LOWER(first_name), ?) > 0)
+     ORDER BY (alias IS NOT NULL AND LOWER(alias) = ?) DESC, updated_at DESC
+     LIMIT 10`
+  )
+    .bind(q, q, q)
+    .all<UserRow>();
+  return res.results ?? [];
+}
+
 export async function findUserByName(env: Env, name: string): Promise<UserRow | null> {
-  return (
-    (await env.DB
-      .prepare("SELECT * FROM users WHERE first_name IS NOT NULL AND INSTR(LOWER(first_name), ?) > 0 LIMIT 1")
-      .bind(name.toLowerCase())
-      .first<UserRow>()) ?? null
-  );
+  return (await findUsersByName(env, name))[0] ?? null;
 }
 
 /** فهرست کاربرهای اخیر برای کمک به AI در تشخیص مسئول */
 export async function recentUsers(env: Env, limit = 25): Promise<string> {
   const res = await env.DB.prepare(
-    "SELECT first_name, username FROM users ORDER BY updated_at DESC LIMIT ?"
+    "SELECT alias, first_name, username FROM users ORDER BY updated_at DESC LIMIT ?"
   )
     .bind(limit)
-    .all<{ first_name: string | null; username: string | null }>();
+    .all<{ alias: string | null; first_name: string | null; username: string | null }>();
   return (res.results ?? [])
-    .map((u) => [u.first_name, u.username ? `@${u.username}` : null].filter(Boolean).join(" "))
+    .map((u) => [u.alias, u.first_name, u.username ? `@${u.username}` : null].filter(Boolean).join(" "))
     .join(", ");
 }
 
@@ -280,7 +297,7 @@ export async function deleteTasksOwnedBy(env: Env, userId: number, scope: "all" 
 // ============================================================
 
 export async function savePendingAuth(
-  env: Env, userId: number, chatId: number, mode: "register" | "login", step: "username" | "password", username: string
+  env: Env, userId: number, chatId: number, mode: "register" | "login", step: "username" | "password" | "alias", username: string
 ): Promise<void> {
   await env.DB.prepare(
     `INSERT INTO pending_auth (user_id, chat_id, mode, step, username, created_at) VALUES (?, ?, ?, ?, ?, ?)
@@ -303,13 +320,19 @@ export async function deletePendingAuth(env: Env, userId: number): Promise<void>
   await env.DB.prepare("DELETE FROM pending_auth WHERE user_id = ?").bind(userId).run();
 }
 
-/** انتخابِ کاربر برای تسک جدید (ادمین) — متن تسک بعداً می‌آید */
-export async function savePendingPick(env: Env, userId: number, chatId: number, assigneeId: number): Promise<void> {
+/** انتخابِ کاربر برای تسک جدید (ادمین) — متن تسک بعداً می‌آید؛ یا ابهام‌زدایی هم‌نام‌ها (متن حالا هست) */
+export async function savePendingPick(
+  env: Env,
+  userId: number,
+  chatId: number,
+  assigneeId: number,
+  text: string | null = null
+): Promise<void> {
   await env.DB.prepare(
-    `INSERT INTO pending_pick (user_id, chat_id, assignee_id, created_at) VALUES (?, ?, ?, ?)
-     ON CONFLICT(user_id) DO UPDATE SET chat_id = excluded.chat_id, assignee_id = excluded.assignee_id, created_at = excluded.created_at`
+    `INSERT INTO pending_pick (user_id, chat_id, assignee_id, text, created_at) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(user_id) DO UPDATE SET chat_id = excluded.chat_id, assignee_id = excluded.assignee_id, text = excluded.text, created_at = excluded.created_at`
   )
-    .bind(userId, chatId, assigneeId, new Date().toISOString())
+    .bind(userId, chatId, assigneeId, text, new Date().toISOString())
     .run();
 }
 

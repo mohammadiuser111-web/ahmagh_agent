@@ -14,17 +14,19 @@ export async function sha256Hex(s: string): Promise<string> {
 
 export async function cmdRegister(env: Env, msg: any, arg: string): Promise<void> {
   const parts = arg.trim().split(/\s+/);
-  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+  if (parts.length < 2 || !parts[0] || !parts[1]) {
     await sendMessage(
       env,
       msg.chat.id,
-      "📝 شکل درست: <code>/register &lt;نام‌کاربری&gt; &lt;رمز‌عبور&gt;</code>\n\n" +
+      "📝 شکل درست: <code>/register &lt;نام‌کاربری&gt; &lt;رمز‌عبور&gt; [اسم مستعار]</code>\n\n" +
         "نام کاربری: ۳ تا ۳۲ کاراکتر لاتین/عدد/زیرخط\n" +
+        "اسم مستعار: چیزی که ادمین به جای @ برای واگذاری تسک به تو می‌بیند (مثلاً: ایمان)\n" +
         "با مشخصات ادمین ثبت‌نام کنی → نقشت <b>ادمین</b> می‌شه 👑"
     );
     return;
   }
   const [username, password] = parts;
+  const alias = parts.slice(2).join(" ").trim() || null;
 
   if (!/^[a-zA-Z0-9_]{3,32}$/.test(username)) {
     await sendMessage(env, msg.chat.id, "❌ نام کاربری باید ۳ تا ۳۲ کاراکتر لاتین، عدد یا _ باشد.");
@@ -54,13 +56,14 @@ export async function cmdRegister(env: Env, msg: any, arg: string): Promise<void
   }
 
   const hash = await sha256Hex(password);
-  await setUserCredentials(env, msg.from.id, username, hash, role);
+  await setUserCredentials(env, msg.from.id, username, hash, role, alias);
   await sendMessage(
     env,
     msg.chat.id,
-    role === "admin"
+    (role === "admin"
       ? "👑 <b>ثبت‌نام ادمین انجام شد!</b>\nحالا می‌تونی برای خودت و بقیه‌ی کاربرها تسک بسازی."
-      : "👤 ثبت‌نام شدی (<b>کاربر عادی</b>).\nبرای خودت تسک بساز، لیست کن و خروجی بگیر!"
+      : "👤 ثبت‌نام شدی (<b>کاربر عادی</b>).\nبرای خودت تسک بساز، لیست کن و خروجی بگیر!") +
+      (alias ? `\n🎭 اسم مستعارت: <b>${escapeHtml(alias)}</b>` : "\n🎭 بعداً با /alias می‌تونی اسم مستعار بگیری.")
   );
 }
 
@@ -77,7 +80,8 @@ export async function completeAuth(
   userId: number,
   mode: "register" | "login",
   username: string,
-  password: string
+  password: string,
+  alias?: string | null
 ): Promise<string> {
   const lower = username.toLowerCase();
   const adminUser = (env.ADMIN_USERNAME || "admin").toLowerCase();
@@ -95,7 +99,7 @@ export async function completeAuth(
       role = "admin";
     }
     try {
-      await setUserCredentials(env, userId, username, hash, role);
+      await setUserCredentials(env, userId, username, hash, role, alias ?? null);
     } catch {
       return "❌ این نام کاربری قبلاً گرفته شده. یوزرنیم دیگری بگو:";
     }

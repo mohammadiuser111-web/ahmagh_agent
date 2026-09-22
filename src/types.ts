@@ -30,7 +30,8 @@ export type TaskStatus = "not_started" | "in_progress" | "done";
 export interface PendingPickRow {
   user_id: number;
   chat_id: number;
-  assignee_id: number;
+  assignee_id: number; // 0 = در انتظار ابهام‌زداییِ هم‌نام‌ها (متن در text)
+  text: string | null; // متن اصلی تسک (برای ابهام‌زدایی)
   created_at: string;
 }
 
@@ -69,6 +70,7 @@ export interface UserRow {
   username_login: string | null;  // نام کاربری ثبت‌نام (اختیاری)
   password_hash: string | null;   // sha256 رمز ثبت‌نام
   logged_in?: number;             // 0 = خروج از حساب (ثبت‌نام پابرجا می‌ماند)
+  alias?: string | null;          // اسم مستعار — به جای @ برای ارجاع به کاربر
   role: string;                   // 'admin' | 'user'
 
   chat_id: number | null;
