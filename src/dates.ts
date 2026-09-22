@@ -222,7 +222,7 @@ function applyDayPart(h: number, part: string | undefined): number {
   if (!part) return h;
   if (part === "ظهر") return h === 12 ? 12 : h < 12 ? h + 12 : h;
   if (part === "عصر") return h < 12 ? h + 12 : h;
-  if (part === "شب") return h >= 5 && h < 12 ? h + 12 : h;
+  if (part === "شب") return h === 12 ? 0 : h >= 5 && h < 12 ? h + 12 : h; // «۱۲ شب» = نیمه‌شب
   return h; // صبح / بامداد
 }
 
@@ -357,18 +357,25 @@ export function parseReminderSpec(text: string, todayISO: string): ReminderSpecF
       return dayMin === null ? null : isTime(dayMin);
     };
     let time: string | null = null;
-    // ۱) «ساعت ۱۱:۵۹ یادآوری کن» / «۱۰ صبح بیدارم کن»
+    let near = ""; // پنجره‌ی متنِ کنارِ فعل — تاریخِ یادآوری از همین‌جا درمی‌آید، نه از تاریخِ ددلاین!
+    // ۱) «ساعت ۱۱:۵۹ یادآوری کن» / «۱۰ صبح بیدارم کن» / «۱۲ شب امشب هم یاداوری کن»
     let m = t.match(
-      /(\d{1,2})(?::(\d{2}))?\s*(صبح|ظهر|عصر|شب|بامداد)?\s*(?:رو\s+|را\s+)?(?:یادم|یادآوری|یاداوری|اعلان|بیدارم)/
+      /(\d{1,2})(?::(\d{2}))?\s*(صبح|ظهر|عصر|شب|بامداد)?\s*(?:(?:امشب|امروز|فردا|هم)\s+)*(?:رو\s+|را\s+)?(?:یادم|یادآوری|یاداوری|اعلان|بیدارم)/
     );
-    if (m) time = pickTime(m[1], m[2], m[3]);
+    if (m) {
+      time = pickTime(m[1], m[2], m[3]);
+      near = t.slice(Math.max(0, (m.index ?? 0) - 30), (m.index ?? 0) + m[0].length + 10);
+    }
     // ۲) «یادم بنداز ساعت ۹ صبح» — فقط تا قبلِ بندِ «تا/سررسید» بعدی
     if (!time) {
       const vm = t.match(/(?:یادم|یادآوری|یاداوری|اعلان|بیدارم|بیدار\s*کن)(.*)$/);
       if (vm) {
         const after = vm[1].split(/تا|سررسید/)[0];
         const am = after.match(/(?:ساعت\s*)?(\d{1,2})(?::(\d{2}))?\s*(صبح|ظهر|عصر|شب|بامداد)?/);
-        if (am) time = pickTime(am[1], am[2], am[3]);
+        if (am) {
+          time = pickTime(am[1], am[2], am[3]);
+          near = after;
+        }
       }
     }
     // ۳) فقط وقتی در کل متن یک ساعت هست (اگر چندتاست، احتمالاً یکی‌شان ددلاین است — دست نمی‌زنیم)
@@ -379,17 +386,31 @@ export function parseReminderSpec(text: string, todayISO: string): ReminderSpecF
         time = dt.time;
         if (time) {
           const date = dt.date || todayISO;
-          return { type: "once", time, interval_hours: null, lead_minutes: null, at: `${date}T${time}:00+03:30` };
+          return { type: "once", time, interval_hours: null, lead_minutes: null, at: rollOnceForward(`${date}T${time}:00+03:30`) };
         }
       }
       return null; // مبهم — الگوریتم پیش‌فرض
     }
-    const dt2 = parseRelativeFaDateTime(t, todayISO);
+    // تاریخ از پنجره‌ی کنارِ فعل (اگر بود) وگرنه از کل متن
+    const dt2 = parseRelativeFaDateTime(near || t, todayISO);
     const date2 = dt2.date || todayISO;
-    return { type: "once", time, interval_hours: null, lead_minutes: null, at: `${date2}T${time}:00+03:30` };
+    return { type: "once", time, interval_hours: null, lead_minutes: null, at: rollOnceForward(`${date2}T${time}:00+03:30`) };
   }
 
   return null;
+}
+
+/**
+ * یادآوریِ یک‌باره در گذشته؟ → همان ساعتِ فردا.
+ * مثال واقعی: «ساعت ۱۲ شب امشب یادآوری کن» ظهر گفته شده → ۰۰:۰۰ِ امروز گذشته است
+ * ولی منظور «نیمه‌شبِ امشب» = فردا ساعت ۰۰:۰۰ است (نه شلیکِ همان لحظه!).
+ */
+export function rollOnceForward(at: string): string {
+  const ms = Date.parse(at);
+  if (Number.isNaN(ms) || ms > Date.now()) return at;
+  const d = new Date(ms + TEHRAN_OFFSET_MS + 24 * 3_600_000);
+  const day = `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+  return `${day}T${at.slice(11, 16)}:00+03:30`;
 }
 
 /** متن فارسی الگوی یادآوری برای کارت تسک */

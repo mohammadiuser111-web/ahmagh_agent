@@ -40,7 +40,7 @@ export function displayName(u: UserRow | null | undefined, fallback = "ناشن�
   return escapeHtml(name);
 }
 
-/** کارت کامل تسک (HTML تلگرام) */
+/** کارت کامل تسک (HTML تلگرام) — دیزاین دومرحله‌ای: پس از «تسک ساخته شد» همین کارت جایگزین پیام می‌شود */
 export function taskCard(
   task: TaskRow,
   creator: UserRow | null,
@@ -52,16 +52,11 @@ export function taskCard(
     `📌 عنوان: <b>${escapeHtml(truncate(task.title, 120))}</b>`,
   ];
   if (task.description) lines.push(`📝 توضیحات: ${escapeHtml(truncate(task.description, 800))}`);
-  lines.push(`👤 ایجادکننده: ${displayName(creator)}`);
-  lines.push(`👷 مسئول: ${displayName(assignee)}`);
   lines.push(`🚦 وضعیت: ${STATUS_EMOJI[task.status]} ${STATUS_LABEL[task.status]}`);
+  lines.push(`👤 ایجادکننده: ${displayName(creator)} | 👷 مسئول: ${displayName(assignee)}`);
   lines.push(
-    `🚀 تاریخ شروع: ${fmtDate(task.start_date)}${task.start_at ? ` — ساعت ${fmtTimeTehran(task.start_at)}` : ""}`
+    `🚀 شروع: ${fmtDate(task.start_date)}${task.start_at ? ` — ${fmtTimeTehran(task.start_at)}` : ""} | 🏁 پایان: ${fmtDate(task.due_date)}${task.due_at ? ` — ${fmtTimeTehran(task.due_at)}` : ""}`
   );
-  lines.push(
-    `🏁 تاریخ پایان: ${fmtDate(task.due_date)}${task.due_at ? ` — ساعت ${fmtTimeTehran(task.due_at)}` : ""}`
-  );
-  lines.push(`🗓 ساخته‌شده: ${fmtDateTime(task.created_at)}`);
   const remText = reminderSpecText(task);
   if (remText) lines.push(`🔔 یادآوری: ${remText}`);
   if (task.status === "not_started" && task.auto_start) {
@@ -79,17 +74,25 @@ export function taskCard(
   return lines.join("\n");
 }
 
-/** دکمه‌های تغییر وضعیت زیر کارت تسک */
+/** دکمه‌های زیر کارت تسک: ردیف اول حذف/ویرایش، ردیف دوم وضعیت‌ها */
 export function statusKeyboard(task: Pick<TaskRow, "id" | "status">) {
   const button = (label: string, status: TaskStatus) => ({
     text: task.status === status ? `✔️ ${label}` : label,
     callback_data: `st|${task.id}|${status}`,
   });
-  const rows = [[button("🔄 در حال انجام", "in_progress"), button("✅ تمام شد", "done")]];
-  if (task.status !== "not_started") rows.push([button("⬜️ شروع‌نشده کن", "not_started")]);
-  // ✏️🗑 تعامل مستقیم با تسک از روی کارت
-  rows.push([{ text: "✏️ ویرایش", callback_data: `edt|${task.id}` }, { text: "🗑 حذف", callback_data: `delx|${task.id}` }]);
-  return { inline_keyboard: rows };
+  return {
+    inline_keyboard: [
+      [
+        { text: "🗑 حذف", callback_data: `delx|${task.id}` },
+        { text: "✏️ ویرایش", callback_data: `edt|${task.id}` },
+      ],
+      [
+        button("✅ تمام شد", "done"),
+        button("🔄 در حال انجام", "in_progress"),
+        button("⬜️ شروع نشده", "not_started"),
+      ],
+    ],
+  };
 }
 
 /** نام‌های فارسی/انگلیسی فیلدهای قابل ویرایش در /edit */

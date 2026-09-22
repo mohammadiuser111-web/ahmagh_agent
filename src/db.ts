@@ -1,7 +1,7 @@
 /**
  * لایه‌ی دیتابیس — همه‌ی کوئری‌های D1
  */
-import type { Env, PendingDraft, PendingEditRow, PendingTaskRow, ReminderSpec, TaskRow, TaskStatus, UserRow } from "./types";
+import type { Env, PendingDraft, PendingEditRow, PendingTaskRow, ReminderSpec, TaskRow, TaskStatus, UserRow , PendingPickRow} from "./types";
 
 /** ثبت/به‌روزرسانی کاربر (هر بار که حرف بزند) */
 export async function upsertUser(
@@ -301,6 +301,37 @@ export async function getPendingAuth(env: Env, userId: number): Promise<{ user_i
 
 export async function deletePendingAuth(env: Env, userId: number): Promise<void> {
   await env.DB.prepare("DELETE FROM pending_auth WHERE user_id = ?").bind(userId).run();
+}
+
+/** انتخابِ کاربر برای تسک جدید (ادمین) — متن تسک بعداً می‌آید */
+export async function savePendingPick(env: Env, userId: number, chatId: number, assigneeId: number): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO pending_pick (user_id, chat_id, assignee_id, created_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(user_id) DO UPDATE SET chat_id = excluded.chat_id, assignee_id = excluded.assignee_id, created_at = excluded.created_at`
+  )
+    .bind(userId, chatId, assigneeId, new Date().toISOString())
+    .run();
+}
+
+export async function getPendingPick(env: Env, userId: number): Promise<PendingPickRow | null> {
+  return (await env.DB.prepare("SELECT * FROM pending_pick WHERE user_id = ?").bind(userId).first<PendingPickRow>()) ?? null;
+}
+
+export async function deletePendingPick(env: Env, userId: number): Promise<void> {
+  await env.DB.prepare("DELETE FROM pending_pick WHERE user_id = ?").bind(userId).run();
+}
+
+/** حذف کامل کاربر + همه‌ی تسک‌ها و پیش‌نویس‌هایش — خروجی: تعداد تسک‌های حذف‌شده */
+export async function deleteUser(env: Env, userId: number): Promise<number> {
+  const cnt = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM tasks WHERE assignee_id = ? OR creator_id = ?"
+  ).bind(userId, userId).first<{ n: number }>();
+  await env.DB.prepare("DELETE FROM tasks WHERE assignee_id = ? OR creator_id = ?").bind(userId, userId).run();
+  for (const tbl of ["pending_tasks", "pending_edits", "pending_auth", "pending_pick"]) {
+    await env.DB.prepare(`DELETE FROM ${tbl} WHERE user_id = ?`).bind(userId).run();
+  }
+  await env.DB.prepare("DELETE FROM users WHERE user_id = ?").bind(userId).run();
+  return cnt?.n ?? 0;
 }
 
 /** خروج/بازگشت: ثبت‌نام پابرجا می‌ماند، فقط نشست عوض می‌شود */

@@ -2,7 +2,7 @@
  * 🧪 محیط ایزوله — ورود/ثبت‌نام دکمه‌ای + کارتِ تعاملی + باگ‌های لایو ۱۱:۴۰
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { ALI, ADMIN_PASS, ADMIN_USER, ASGHAR, Harness, createScene } from "./harness";
+import { ALI, ADMIN_PASS, ADMIN_USER, ASGHAR, Harness, MOHAMMAD, createScene } from "./harness";
 import { addDaysISO, todayTehranISO } from "../src/dates";
 
 let h: Harness;
@@ -45,7 +45,7 @@ describe("🚪 ورود/ثبت‌نام دکمه‌ای", () => {
     await h.say(NEWBIE, "secret123");
     const last = h.lastText(NEWBIE.id);
     expect(last).toContain("ثبت‌نام کامل شد");
-    expect(JSON.stringify(h.to(NEWBIE.id).filter((m) => m.kind === "message").at(-1)!.keyboard ?? {})).toContain("➕ تسک جدید");
+    expect(JSON.stringify(h.to(NEWBIE.id).filter((m) => m.kind === "message").at(-1)!.keyboard ?? {})).toContain("🗂 مدیریت تسک");
 
     // حالا بات برایش کار می‌کند
     await h.say(NEWBIE, "یه تسک بساز: اولین کارم، تا فردا");
@@ -107,12 +107,24 @@ describe("🚪 ورود/ثبت‌نام دکمه‌ای", () => {
 });
 
 describe("🎴 کارتِ تعاملی (ویرایش/حذف روی کارت)", () => {
-  it("کارت تسک دکمه‌های ✏️ ویرایش و 🗑 حذف دارد", async () => {
+  it("کارت تسک دومرحله‌ای است: «تسک ساخته شد» → کارت کامل با دکمه‌ها", async () => {
     await h.say(ALI, "یه تسک بساز: کارت تعاملی، تا فردا");
-    const cardMsg = h.to(ALI.id).filter((m) => m.kind === "message").find((m) => (m.text ?? "").includes("تسک ساخته شد"))!;
-    const kb = JSON.stringify(cardMsg.keyboard ?? {});
+    // مرحله‌ی ۱: پیام کوتاه
+    const first = h.texts(ALI.id).at(-1)!;
+    expect(first).toContain("تسک ساخته شد");
+    expect(first).toContain("کارت تعاملی");
+    expect(first).toContain("🆔");
+    // مرحله‌ی ۲: همان پیام به کارت کامل تبدیل می‌شود
+    const edit = h.edits(ALI.id).at(-1)!;
+    expect(edit.text ?? "").toContain("کارت تعاملی");
+    expect(edit.text ?? "").toContain("وضعیت");
+    expect(edit.text ?? "").toContain("مسئول");
+    const kb = JSON.stringify(edit.keyboard ?? {});
     expect(kb).toContain("edt|");
     expect(kb).toContain("delx|");
+    expect(kb).toContain("تمام شد");
+    expect(kb).toContain("شروع نشده");
+    expect(kb).toContain("در حال انجام");
   });
 
   it("✏️ ویرایش روی کارت → «چی عوض بشه؟» → جواب زبانی", async () => {
@@ -159,8 +171,10 @@ describe("🐞 باگ‌های لایو ۱۱:۵۷", () => {
     const before = h.texts(ALI.id).length;
     await h.advance(Date.parse(`${todayTehranISO()}T12:00:30+03:30`) - h.now());
     expect(h.texts(ALI.id).length).toBe(before + 1);
-    expect(h.lastText(ALI.id)).toContain("یادآوری‌ای که خواستی");
+    expect(h.lastText(ALI.id)).toContain("یادآوری برای");
     expect(h.lastText(ALI.id)).toContain("طراحی لندنیگ پیچ");
+    const rem = h.to(ALI.id).filter((m) => m.kind === "message").at(-1)!;
+    expect(JSON.stringify(rem.keyboard ?? {})).toContain(`card|${t.id}`);
   });
 
   it("«تسک 55» → کارت همان تسک باز می‌شود", async () => {
@@ -214,6 +228,115 @@ describe("🐞 باگ‌های لایو ۱۱:۵۷", () => {
 });
 
 describe("🐞 باگ‌های لایو ۱۱:۴۰", () => {
+  it("«ساعت ۱۲ شب امشب یاداوری کن» ظهر گفته شده → نیمه‌شبِ امشب = فردا ۰۰:۰۰ (نه شلیکِ همان لحظه)", async () => {
+    await h.say(ALI, "یه تسک جدید بسازم\nباید طراحی لندینگ کنم برای یه سایتی\nتا ساعت 6 فردا وقت دارم\nساعت 12 شب امشب هم یاداوری کن");
+    const t = h.tasks().at(-1)!;
+    expect(t).toBeTruthy();
+    const tmr = new Date(Date.parse(`${todayTehranISO()}T12:00:00+03:30`) + 24 * 3600_000 + 3.5 * 3600_000);
+    const tmrISO = tmr.toISOString().slice(0, 10);
+    expect(t.due_at).toBe(`${tmrISO}T06:00:00+03:30`);
+    expect(t.reminder_type).toBe("once");
+    expect(t.reminder_at).toBe(`${tmrISO}T00:00:00+03:30`);
+    // و همان لحظه شلیک نمی‌کند
+    const before = h.texts(ALI.id).length;
+    await h.advance(10 * 60_000);
+    expect(h.texts(ALI.id).length).toBe(before);
+  });
+
+  it("دکمه‌ی «🎴 باز کردن کارت تسک» روی پیام یادآوری → کارت با دکمه‌ها", async () => {
+    await h.say(ALI, "یه تسک بساز: دکمه کارت یادآوری، تا فردا — فردا ساعت ۹ صبح یادم بنداز");
+    const t = h.tasks().at(-1)!;
+    await h.advance(26 * 3600_000); // فردا ۹ صبح می‌رسد
+    const rem = h.to(ALI.id).filter((m) => m.kind === "message").at(-1)!;
+    expect(rem.text ?? "").toContain("یادآوری برای");
+    expect(JSON.stringify(rem.keyboard ?? {})).toContain(`card|${t.id}`);
+    await h.callback(ALI, `card|${t.id}`);
+    const edit = h.edits(ALI.id).at(-1)!;
+    expect(edit.text ?? "").toContain("دکمه کارت یادآوری");
+    expect(edit.text ?? "").toContain("وضعیت");
+    expect(JSON.stringify(edit.keyboard ?? {})).toContain("st|");
+  });
+
+  it("منو: 🗂 مدیریت تسک ← زیرمنو ← 🔙 بازگشت؛ 📊 گزارش؛ 🚪 خروج با تأیید", async () => {
+    await h.say(ALI, "🗂 مدیریت تسک");
+    const sub = h.to(ALI.id).filter((m) => m.kind === "message").at(-1)!;
+    const kb = JSON.stringify(sub.keyboard ?? {});
+    expect(sub.text ?? "").toContain("مدیریت تسک");
+    expect(kb).toContain("➕ تسک جدید");
+    expect(kb).toContain("🗑 حذف تسک");
+    await h.say(ALI, "🔙 بازگشت");
+    expect(JSON.stringify(h.to(ALI.id).filter((m) => m.kind === "message").at(-1)!.keyboard ?? {})).toContain("📊 گزارش");
+    await h.say(ALI, "📊 گزارش");
+    expect(h.lastText(ALI.id)).toContain("فرمت");
+    await h.say(ALI, "🚪 خروج");
+    const out = h.to(ALI.id).filter((m) => m.kind === "message").at(-1)!;
+    expect(JSON.stringify(out.keyboard ?? {})).toContain("out|yes");
+    await h.callback(ALI, "out|yes");
+    expect(h.texts(ALI.id).some((x) => x.includes("خارج شدی"))).toBe(true);
+    await h.say(ALI, "یه تسک بساز: بعد خروج منویی، تا فردا");
+    expect(JSON.stringify(h.to(ALI.id).filter((m) => m.kind === "message").at(-1)!.keyboard ?? {})).toContain("auth|reg");
+    await h.say(ALI, "/login");
+    await h.say(ALI, "ali_user");
+    await h.say(ALI, "pass1234");
+    expect(h.lastText(ALI.id)).toContain("خوش برگشتی");
+  });
+
+  it("منوی کاربر عادی دکمه‌های ادمین ندارد؛ 🗑 حذف کاربر هم بسته است", async () => {
+    await h.say(ALI, "/menu");
+    const kb = JSON.stringify(h.to(ALI.id).filter((m) => m.kind === "message").at(-1)!.keyboard ?? {});
+    expect(kb).toContain("🗂 مدیریت تسک");
+    expect(kb).not.toContain("👥 کاربرها");
+    expect(kb).not.toContain("🗑 حذف کاربر");
+    await h.say(ALI, "🗑 حذف کاربر");
+    expect(h.lastText(ALI.id)).toContain("فقط برای ادمین");
+  });
+
+  it("ادمین: 🗑 حذف کاربر → تأیید → کاربر و تسک‌هایش می‌روند", async () => {
+    await h.say(MOHAMMAD, "یه تسک بساز: تسک ممد پیش از حذف، تا فردا");
+    await h.say(ASGHAR, "🗑 حذف کاربر");
+    const list = h.to(ASGHAR.id).filter((m) => m.kind === "message").at(-1)!;
+    expect(JSON.stringify(list.keyboard ?? {})).toContain(`delu|${MOHAMMAD.id}`);
+    await h.callback(ASGHAR, `delu|${MOHAMMAD.id}`);
+    const confirm = h.to(ASGHAR.id).filter((m) => m.kind === "message").at(-1)!;
+    expect(confirm.text ?? "").toContain("ممد");
+    expect(JSON.stringify(confirm.keyboard ?? {})).toContain(`deluok|${MOHAMMAD.id}`);
+    await h.callback(ASGHAR, `deluok|${MOHAMMAD.id}`);
+    expect(h.lastText(ASGHAR.id)).toContain("حذف شد");
+    expect((h.env.DB as any).raw("SELECT COUNT(*) AS n FROM users WHERE user_id = ?").get(MOHAMMAD.id).n).toBe(0);
+    expect((h.env.DB as any).raw("SELECT COUNT(*) AS n FROM tasks WHERE assignee_id = ?").get(MOHAMMAD.id).n).toBe(0);
+    await h.callback(ASGHAR, `delu|${ASGHAR.id}`);
+    expect(h.outbox.some((m) => (m.text ?? "").includes("خودت رو نمی‌تونی حذف کنی"))).toBe(true);
+  });
+
+  it("ادمین: «برای @» → لیست کاربرها → انتخاب → «تسک رو بنویس» → ساخت برای او", async () => {
+    await h.say(ASGHAR, "یه تسک جدید ایجاد کن برای @");
+    const pick = h.to(ASGHAR.id).filter((m) => m.kind === "message").at(-1)!;
+    expect(pick.text ?? "").toContain("کدوم کاربر");
+    expect(JSON.stringify(pick.keyboard ?? {})).toContain(`asg0|${ALI.id}`);
+    await h.callback(ASGHAR, `asg0|${ALI.id}`);
+    expect(h.lastText(ASGHAR.id)).toContain("تسک رو بنویس");
+    await h.say(ASGHAR, "طراحی لوگو برای سایت، تا جمعه ساعت ۱۸");
+    const t = h.tasks().at(-1)!;
+    expect(t).toBeTruthy();
+    expect(t.title).toContain("طراحی لوگو");
+    expect(t.assignee_id).toBe(ALI.id);
+    expect(t.creator_id).toBe(ASGHAR.id);
+    expect(h.texts(ALI.id).some((x) => x.includes("طراحی لوگو"))).toBe(true);
+  });
+
+  it("ادمین: «برای نامِ ناشناس» → تسک ساخته می‌شود + انتخابگرِ واگذاری", async () => {
+    await h.say(ASGHAR, "یه تسک بساز: گزارش هفتگی، تا فردا — برای رضاناشناس");
+    const t = h.tasks().at(-1)!;
+    expect(t).toBeTruthy();
+    expect(t.assignee_id).toBe(ASGHAR.id); // فعلاً خودش
+    const pick = h.to(ASGHAR.id).filter((m) => m.kind === "message").at(-1)!;
+    expect(pick.text ?? "").toContain("یکی از این‌ها");
+    expect(JSON.stringify(pick.keyboard ?? {})).toContain(`asg|${t.id}|${ALI.id}`);
+    await h.callback(ASGHAR, `asg|${t.id}|${ALI.id}`);
+    expect(h.task(t.id)!.assignee_id).toBe(ALI.id);
+    expect(h.lastText(ASGHAR.id)).toContain("مسئول");
+  });
+
   it("«تسک شماره ۵۵، تاریخ پایان تسک رو تغییر بده به فردا ساعت 12» → مستقیم آپدیت (نه لیست!)", async () => {
     await h.say(ALI, "یه تسک بساز: ساخت ایجنت, تا امروز ساعت ۱۲");
     const t = h.tasks().at(-1)!;
@@ -226,8 +349,8 @@ describe("🐞 باگ‌های لایو ۱۱:۴۰", () => {
 
   it("کارتِ تسکِ با یادآوری، فقط «یک» خط 🔔 دارد (نه دوبار)", async () => {
     await h.say(ALI, "یه تسک بساز: بدون تکرار، تا فردا — فردا ساعت ۹ صبح یادم بنداز");
-    const cardMsg = h.to(ALI.id).filter((m) => m.kind === "message").find((m) => (m.text ?? "").includes("تسک ساخته شد"))!;
-    const count = (cardMsg.text ?? "").split("🔔 یادآوری").length - 1;
+    const edit = h.edits(ALI.id).at(-1)!;
+    const count = (edit.text ?? "").split("🔔 یادآوری").length - 1;
     expect(count).toBe(1);
   });
 });

@@ -50,7 +50,7 @@ describe("🏁 ماراتن ۷ روزه (محیط ایزوله)", () => {
     // ددلاین‌محور: فقط یک‌بار
     expect(aliTexts.filter((x) => x.includes("ددلاین نزدیکه")).length).toBe(1);
     // یک‌باره: فقط یک‌بار
-    expect(aliTexts.filter((x) => x.includes("یادآوری‌ای که خواستی")).length).toBe(1);
+    expect(aliTexts.filter((x) => x.includes("یادآوری برای")).length).toBe(1);
     // خاموش: تسکِ «ساکت» هرگز یادآوری نمی‌گیرد
     expect(mmdTexts.some((x) => x.includes("ساکت"))).toBe(false);
     // پلکانی پیش‌فرض: بعد از سررسید هر ۲ ساعت اذیت می‌کند (اسکیلیشن)

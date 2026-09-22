@@ -101,7 +101,11 @@ function dynamicDue(
     case "once": {
       if (!task.reminder_at || task.reminder_done) return { fire: false, once: false, text: null };
       if (now < Date.parse(task.reminder_at)) return { fire: false, once: false, text: null };
-      return { fire: true, once: true, text: `🔔 یادآوری‌ای که خواستی` };
+      return {
+        fire: true,
+        once: true,
+        text: `🔔 <b>یادآوری برای</b> «${escapeHtml(truncate(task.title, 60))}» — 🆔 ${faDigits(task.id)}`,
+      };
     }
 
     default:
@@ -164,7 +168,12 @@ async function sendReminder(env: Env, task: TaskRow, head: string | null): Promi
     console.log(`[reminders] no chat_id for task ${task.id} (assignee=${task.assignee_id})`);
     return false;
   }
-  await sendMessage(env, target, reminderText(task, assignee, head));
+  // 🎴 دکمه‌ی باز کردن کارت — به‌جای دستورهای متنی
+  await sendMessage(env, target, reminderText(task, assignee, head), {
+    reply_markup: {
+      inline_keyboard: [[{ text: "🎴 باز کردن کارت تسک", callback_data: `card|${task.id}` }]],
+    },
+  });
   return true;
 }
 
@@ -179,12 +188,9 @@ function reminderText(task: TaskRow, assignee: UserRow | null, dynamicHead: stri
     const spec = reminderSpecText(task);
     return [
       dynamicHead,
-      `تسک «${title}»`,
+      `تسک «${title}» — 🆔 ${faDigits(id)}`,
       task.due_at || task.due_date ? `🏁 سررسید: ${fmtDate(task.due_date)}${task.due_at ? ` — ساعت ${faDigits(task.due_at.slice(11, 16))}` : ""}` : "",
       spec ? `🔔 الگو: ${escapeHtml(spec)}` : "",
-      "",
-      `✅ تمومش کردی؟ /done ${id}`,
-      `🔍 جزئیات: /task ${id}`,
     ]
       .filter((l) => l !== "")
       .join("\n");
@@ -220,9 +226,7 @@ function reminderText(task: TaskRow, assignee: UserRow | null, dynamicHead: stri
     head,
     "",
     tail,
-    "",
-    `✅ تمومش کردی؟ /done ${id}`,
-    `🔍 جزئیات: /task ${id}`,
+    `🆔 شناسه: ${faDigits(id)}`,
   ].join("\n");
 }
 
@@ -253,9 +257,8 @@ export async function runAutoStart(env: Env): Promise<void> {
         await sendMessage(
           env,
           target,
-          `🚦 وقتش رسید! تسک «${escapeHtml(truncate(task.title, 80))}» از امروز <b>در حال انجام</b> است — بزن بریم 💪` +
-            `\n\n✅ تمومش کردی؟ /done ${task.id}` +
-            `\n🔍 جزئیات: /task ${task.id}`
+          `🚦 وقتش رسید! تسک «${escapeHtml(truncate(task.title, 80))}» از امروز <b>در حال انجام</b> است — بزن بریم 💪`,
+          { reply_markup: { inline_keyboard: [[{ text: "🎴 باز کردن کارت تسک", callback_data: `card|${task.id}` }]] } }
         );
       }
     } catch (err) {

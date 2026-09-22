@@ -20,6 +20,10 @@ import {
   recentUsers,
   savePendingAuth,
   savePendingEdit,
+  savePendingPick,
+  getPendingPick,
+  deletePendingPick,
+  deleteUser,
   setLoggedIn,
   savePendingTask,
   getPendingAuth,
@@ -58,6 +62,9 @@ import {
 /** واژه‌ی بیدارکننده‌ی بات 😄 */
 const TRIGGER_RE = /احمق|ahmagh/i;
 
+/** تأخیر (در تست ۰ تا قطعی و سریع باشد؛ در پروداکشن ۳ ثانیه برای انیمیشن کارت) */
+const sleep = (ms: number) => (ms > 0 ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve());
+
 const WELCOME = `سلام! من <b>احمق‌ایجنت</b> هستم 🤖
 ایجنتِ مدیریت تسک شما — اسمم «احمقه» ولی کارم درسته!
 
@@ -82,7 +89,7 @@ const HELP = `🤖 <b>راهنمای احمق‌ایجنت</b>
 
 <b>با زبان طبیعی — لازم نیست «احمق» بگی، هرجور راحتی بگو:</b>
 • «یه تسک بساز: تماس با مشتری، تا شنبه — هر روز ساعت ۵ یادم کن»
-• «تسک‌هامو نشون بده» · «کدومش به ددلاین نزدیک‌تره؟»
+• «تسک‌هامو نشون بده» · «کدومش به ددلاین نزدیک‌تره؟» · «تسک ۵۵» (کارت همان تسک)
 • «تسک گزارش رو ویرایش کن» · «همه تسک‌هامو حذف کن»
 • «خروجی تسک‌هامو بده»
 
@@ -102,13 +109,13 @@ const HELP = `🤖 <b>راهنمای احمق‌ایجنت</b>
 /whoami — حساب و نقش من
 /logout — خروج از حساب 🚪
 /export — خروجی گزارشی از تسک‌ها (HTML یا PDF)
-/menu — منوی دکمه‌ای 🎛 (ساخت/لیست/حذف/خروجی + بخش ادمین)
+/menu — منوی دکمه‌ای 🎛 (🗂 مدیریت تسک · 📊 گزارش · 🚪 خروج + ادمین: 👥 کاربرها · 🌐 تسک‌های همه · 🗑 حذف کاربر)
 /help — همین راهنما
 
 <b>وضعیت‌ها:</b> not_started / in_progress / done
 (معادل فارسی هم قبوله: شروع_نشده / در_حال_انجام / تمام)
 
-💡 زیر کارت هر تسک، دکمه‌ی تغییر وضعیت هم هست.
+💡 زیر کارت هر تسک: 🗑 حذف | ✏️ ویرایش و سه دکمه‌ی وضعیت (تمام شد / در حال انجام / شروع نشده).
 
 <b>نکته‌ها:</b>
 • تاریخ پایان اجباریه — اگه تو متن نگی، جدا می‌پرسم و فقط جواب می‌دی (مثلاً: فردا / پنجشنبه / فردا ساعت ۵ عصر)
@@ -232,12 +239,48 @@ export async function handleUpdate(env: Env, update: unknown): Promise<void> {
 /** منوی اصلی — دکمه‌های آماده (کیبورد دائمی تلگرام) */
 function mainKeyboard(isAdmin: boolean) {
   const rows: { text: string }[][] = [
-    [{ text: "➕ تسک جدید" }, { text: "📋 تسک‌های من" }],
-    [{ text: "🕘 تموم‌شده‌ها" }, { text: "📤 خروجی" }],
+    [{ text: "🗂 مدیریت تسک" }, { text: "📊 گزارش" }],
   ];
-  if (isAdmin) rows.push([{ text: "👥 کاربرها" }, { text: "🌐 تسک‌های همه" }]);
-  rows.push([{ text: "❓ راهنما" }]);
+  if (isAdmin) rows.push([{ text: "👥 کاربرها" }, { text: "🌐 تسک‌های همه" }, { text: "🗑 حذف کاربر" }]);
+  rows.push([{ text: "❓ راهنما" }, { text: "🚪 خروج" }]);
   return { keyboard: rows, resize_keyboard: true, is_persistent: true };
+}
+
+/** زیرمنوی مدیریت تسک */
+function taskMenuKeyboard() {
+  return {
+    keyboard: [
+      [{ text: "➕ تسک جدید" }, { text: "📋 تسک‌های من" }],
+      [{ text: "✏️ ویرایش تسک" }, { text: "🗑 حذف تسک" }],
+      [{ text: "🕘 تموم‌شده‌ها" }, { text: "🔙 بازگشت" }],
+    ],
+    resize_keyboard: true,
+    is_persistent: true,
+  };
+}
+
+/** برچسب دکمه‌های منو → کنش */
+const MENU_TEXTS: Record<string, string> = {
+  "➕ تسک جدید": "new",
+  "📋 تسک‌های من": "mine",
+  "🕘 تموم‌شده‌ها": "done",
+  "📤 خروجی": "export",
+  "👥 کاربرها": "users",
+  "🌐 تسک‌های همه": "all",
+  "❓ راهنما": "help",
+  "🗂 مدیریت تسک": "manage",
+  "📊 گزارش": "export",
+  "🚪 خروج": "logout",
+  "✏️ ویرایش تسک": "edithint",
+  "🗑 حذف تسک": "delhint",
+  "🔙 بازگشت": "back",
+  "🗑 حذف کاربر": "deluser",
+};
+
+/** آیا این متن، برچسبِ یک دکمه‌ی منو است؟ (برای مسیریابی پیش‌نویس‌ها) */
+function isMenuLabel(text: string): boolean {
+  const norm = (x: string) => x.replace(/\u200c/g, " ").replace(/\s+/g, " ").trim();
+  return Object.keys(MENU_TEXTS).some((k) => norm(k) === norm(text));
 }
 
 /** مسیریابی متنِ دکمه‌های منو */
@@ -247,18 +290,9 @@ async function onMenuButton(env: Env, msg: any, text: string): Promise<boolean> 
   // نرمال‌سازی هر دو طرف (نیم‌فاصله/فاصله‌های چندتایی) تا دکمه‌ها همیشه match شوند
   const norm = (x: string) => x.replace(/‌/g, " ").replace(/\s+/g, " ").trim();
   const t = norm(text);
-  const menuTexts: Record<string, string> = {
-    "➕ تسک جدید": "new",
-    "📋 تسک‌های من": "mine",
-    "🕘 تموم‌شده‌ها": "done",
-    "📤 خروجی": "export",
-    "👥 کاربرها": "users",
-    "🌐 تسک‌های همه": "all",
-    "❓ راهنما": "help",
-  };
-  const action = Object.entries(menuTexts).find(([k]) => norm(k) === t)?.[1];
+  const action = Object.entries(MENU_TEXTS).find(([k]) => norm(k) === t)?.[1];
   if (!action) return false;
-  if (!isAdmin && (action === "users" || action === "all")) {
+  if (!isAdmin && (action === "users" || action === "all" || action === "deluser")) {
     await sendMessage(env, msg.chat.id, "این بخش فقط برای ادمین است 👑");
     return true;
   }
@@ -285,11 +319,92 @@ async function onMenuButton(env: Env, msg: any, text: string): Promise<boolean> 
     case "all":
       await sendAllUsersTasks(env, msg);
       return true;
+    case "manage":
+      await sendMessage(
+        env,
+        msg.chat.id,
+        "🗂 <b>مدیریت تسک</b>\nاز دکمه‌های پایین انتخاب کن — یا مثل همیشه طبیعی حرف بزن:",
+        { reply_markup: taskMenuKeyboard() }
+      );
+      return true;
+    case "edithint":
+      await sendMessage(
+        env,
+        msg.chat.id,
+        "✏️ کدوم تسک؟ مثلاً:\n• «تسک ۵ رو ویرایش کن»\n• /edit 5 عنوان: عنوان جدید\nیا کارتش رو باز کن (مثلاً «تسک ۵») و ✏️ بزن.",
+        { reply_markup: taskMenuKeyboard() }
+      );
+      return true;
+    case "delhint":
+      await sendMessage(
+        env,
+        msg.chat.id,
+        "🗑 کدوم تسک؟ مثلاً:\n• «تسک ۵ رو حذف کن»\n• /delete 5\nیا کارتش رو باز کن و 🗑 حذف بزن.",
+        { reply_markup: taskMenuKeyboard() }
+      );
+      return true;
+    case "back":
+      await sendMessage(env, msg.chat.id, "🎛 منوی اصلی", { reply_markup: mainKeyboard(isAdmin) });
+      return true;
+    case "logout":
+      await sendMessage(env, msg.chat.id, "🚪 مطمئنی که می‌خوای از حسابت خارج بشی؟\n(ثبت‌نامت پاک نمی‌شود؛ با «ورود» برمی‌گردی)", {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "✅ آره، خارج شو", callback_data: "out|yes" }, { text: "❌ بی‌خیال", callback_data: "out|no" }],
+          ],
+        },
+      });
+      return true;
+    case "deluser":
+      await sendDeleteUserList(env, msg);
+      return true;
     case "help":
       await sendMessage(env, msg.chat.id, HELP, { reply_markup: mainKeyboard(isAdmin) });
       return true;
   }
   return false;
+}
+
+/** لیست کاربرها برای حذف (ادمین) */
+async function sendDeleteUserList(env: Env, msg: any): Promise<void> {
+  const rows = await env.DB.prepare(
+    "SELECT user_id, first_name, username, role FROM users WHERE user_id != ? ORDER BY updated_at DESC LIMIT 25"
+  )
+    .bind(msg.from.id)
+    .all<{ user_id: number; first_name: string | null; username: string | null; role: string }>();
+  const kb = (rows.results ?? []).map((u) => [
+    {
+      text: `${u.role === "admin" ? "👑" : "👤"} ${u.first_name ?? "?"}${u.username ? ` (@${u.username})` : ""}`,
+      callback_data: `delu|${u.user_id}`,
+    },
+  ]);
+  if (!kb.length) {
+    await sendMessage(env, msg.chat.id, "کاربر دیگری جز خودت با بات حرف نزده است.");
+    return;
+  }
+  await sendMessage(env, msg.chat.id, "🗑 کدوم کاربر حذف بشه؟ (تسک‌هاش هم پاک می‌شوند — برنمی‌گرده!)", {
+    reply_markup: { inline_keyboard: kb },
+  });
+}
+
+/** لیست انتخاب کاربر (برای واگذاری/ساخت تسک) */
+async function sendUserPickList(env: Env, msg: any, callbackPrefix: string, header: string): Promise<void> {
+  const rows = await env.DB.prepare(
+    "SELECT user_id, first_name, username, role FROM users WHERE user_id != ? ORDER BY updated_at DESC LIMIT 15"
+  )
+    .bind(msg.from.id)
+    .all<{ user_id: number; first_name: string | null; username: string | null; role: string }>();
+  const kb = (rows.results ?? []).map((u) => [
+    {
+      text: `${u.role === "admin" ? "👑" : "👤"} ${u.first_name ?? "?"}${u.username ? ` (@${u.username})` : ""}`,
+      callback_data: `${callbackPrefix}|${u.user_id}`,
+    },
+  ]);
+  if (!kb.length) {
+    await sendMessage(env, msg.chat.id, "هنوز کاربر دیگری با بات حرف نزده است.");
+    return;
+  }
+  await sendMessage(env, msg.chat.id, header, { reply_markup: { inline_keyboard: kb } });
 }
 
 /** لیست کاربرها برای ادمین (دکمه شیشه‌ای → تسک‌های هر کاربر) */
@@ -382,6 +497,8 @@ async function onMessage(env: Env, msg: any): Promise<void> {
   }
   // ادامه‌ی گفت‌وگوی ورود (/login برای کاربرِ واردشده هم ممکن است)
   if (isPrivate && (await tryPendingAuthReply(env, msg, text))) return;
+  // متنِ تسک برای کاربرِ تازه‌انتخاب‌شده (ادمین: «برای @» ← انتخاب ← حالا متن تسک)
+  if (isPrivate && !text.startsWith("/") && !isMenuLabel(text) && (await tryPendingPickReply(env, msg, text))) return;
   // دکمه‌های منو
   if (await onMenuButton(env, msg, text)) return;
   // 👂 در گروه فقط با صدازدن (احمق)؛ در چت خصوصی هر پیامی فهمیده می‌شود
@@ -472,11 +589,12 @@ async function onCommand(env: Env, msg: any, text: string): Promise<void> {
     }
     case "/menu": {
       const me1 = await getUser(env, msg.from.id);
+      const isAdmin1 = me1?.role === "admin";
       await sendMessage(
         env,
         chatId,
-        "🎛 <b>منوی احمق‌ایجنت</b>\nاز دکمه‌های پایین استفاده کن یا طبیعی حرف بزن!\n\n🚪 خروج از حساب: /logout",
-        { reply_markup: mainKeyboard(me1?.role === "admin") }
+        `🎛 <b>منوی احمق‌ایجنت</b>\n\n🗂 مدیریت تسک — ساخت، ویرایش، حذف و تسک‌های من\n📊 گزارش — خروجی HTML/PDF از تسک‌ها\n🚪 خروج — خروج از حساب${isAdmin1 ? "\n👥 کاربرها · 🌐 تسک‌های همه · 🗑 حذف کاربر (ادمین)" : ""}\n\nیا مثل همیشه طبیعی حرف بزن!`,
+        { reply_markup: mainKeyboard(isAdmin1) }
       );
       return;
     }
@@ -556,7 +674,13 @@ async function onCommand(env: Env, msg: any, text: string): Promise<void> {
 // فاز ۱ — ساخت تسک از زبان طبیعی («احمق این تسک رو ایجاد کن: …»)
 // ============================================================
 
-async function createTaskFromText(env: Env, msg: any, text: string, pre?: ParsedTask): Promise<void> {
+async function createTaskFromText(
+  env: Env,
+  msg: any,
+  text: string,
+  pre?: ParsedTask,
+  forcedAssigneeId?: number
+): Promise<void> {
   const chatId = msg.chat.id;
   const known = await recentUsers(env);
   // نتیجه‌ی extractTask از مسیرِ مسیریابی نیت قبلاً آمده — دوباره AI صدا نزن
@@ -578,36 +702,55 @@ async function createTaskFromText(env: Env, msg: any, text: string, pre?: Parsed
   const me = await getUser(env, msg.from.id);
   const isAdmin = me?.role === "admin";
 
-  // 👷 استخراج قطعی مسئول: «برای @یوزر» یا «برای اسم» اگر بین کاربرهای شناخته‌شده باشد
-  if (!parsed.assignee_name) {
-    const mA = text.match(/برای\s+(@?[\w\u0600-\u06FF]+)/);
-    if (mA) {
-      const ref = mA[1];
-      if (ref.startsWith("@")) {
-        const known = await findUserByUsername(env, ref.slice(1).toLowerCase());
-        // ناشناس هم عبور می‌دهد تا ادمین لیست انتخاب کاربر را ببیند
-        if (known || isAdmin) parsed.assignee_name = ref;
-      } else {
-        const known = await findUserByName(env, ref);
-        if (known) parsed.assignee_name = ref;
-      }
-    }
+  // 👑 ادمین «برای @» گفت و متن تمام شد → اول کاربر را از لیست انتخاب کند، بعد متن تسک را می‌پرسیم
+  if (
+    !forcedAssigneeId &&
+    isAdmin &&
+    /برای\s*(@\s*)?$/.test(text.replace(/احمق/g, " ").replace(/\u200c/g, " ").trim())
+  ) {
+    await sendUserPickList(env, msg, "asg0", "👤 کدوم کاربر؟ انتخابش کن تا تسک رو براش بسازم:");
+    return;
   }
 
-  const { user: resolved, note: assignNote, unknownMention } = await resolveAssignee(env, parsed.assignee_name, msg.from.id);
-  let assignee = resolved;
-  let note: string | null = assignNote;
+  let assignee: UserRow;
+  let note: string | null = null;
   let showUserPicker = false;
-  if (!isAdmin && resolved.user_id !== msg.from.id) {
-    // ⛓ فقط ادمین می‌تواند برای دیگری تسک بسازد
-    assignee = me ?? resolved;
-    note = [assignNote, "⛓ فقط ادمین می‌تونه برای دیگه‌ها تسک بسازه؛ فعلاً خودت مسئولش شدی."]
-      .filter(Boolean)
-      .join("\n");
-  } else if (isAdmin && unknownMention) {
-    // 👑 ادمین @ناشناس زد → بعد از ساخت، لیست کاربرها برای انتخاب می‌آید
-    showUserPicker = true;
-    assignee = me ?? resolved;
+  if (forcedAssigneeId) {
+    // مسئول از قبل انتخاب شده (مسیر «برای @» ← دکمه‌ی کاربر ← متن تسک)
+    assignee = (await getUser(env, forcedAssigneeId)) ?? me!;
+    note = `👷 مسئول: ${displayName(assignee)}`;
+  } else {
+    // 👷 استخراج قطعی مسئول: «برای @یوزر» یا «برای اسم»
+    if (!parsed.assignee_name) {
+      const mA = text.match(/برای\s+(@?[\w\u0600-\u06FF]+)/);
+      if (mA) {
+        const ref = mA[1];
+        if (ref.startsWith("@")) {
+          const known = await findUserByUsername(env, ref.slice(1).toLowerCase());
+          // ناشناس هم عبور می‌دهد تا ادمین لیست انتخاب کاربر را ببیند
+          if (known || isAdmin) parsed.assignee_name = ref;
+        } else {
+          const known = await findUserByName(env, ref);
+          // برای ادمین، نامِ ناشناس هم عبور می‌کند تا انتخابگر باز شود
+          if (known || isAdmin) parsed.assignee_name = ref;
+        }
+      }
+    }
+
+    const { user: resolved, note: assignNote, found } = await resolveAssignee(env, parsed.assignee_name, msg.from.id);
+    assignee = resolved;
+    note = assignNote;
+    if (!isAdmin && found && resolved.user_id !== msg.from.id) {
+      // ⛓ فقط ادمین می‌تواند برای دیگری تسک بسازد
+      assignee = me ?? resolved;
+      note = [assignNote, "⛓ فقط ادمین می‌تونه برای دیگه‌ها تسک بسازه؛ فعلاً خودت مسئولش شدی."]
+        .filter(Boolean)
+        .join("\n");
+    } else if (isAdmin && !found && parsed.assignee_name) {
+      // 👑 ادمین @/نامِ ناشناس زد → بعد از ساخت، لیست کاربرها برای انتخاب می‌آید
+      showUserPicker = true;
+      assignee = me ?? resolved;
+    }
   }
   const today = todayTehranISO();
 
@@ -741,27 +884,14 @@ async function createTaskFromText(env: Env, msg: any, text: string, pre?: Parsed
     note
   );
 
-  // 👑 ادمین @ناشناس زد → دکمه‌های انتخاب کاربر
+  // 👑 ادمین @/نامِ ناشناس زد → دکمه‌های انتخاب کاربر
   if (showUserPicker && task) {
-    const rows = await env.DB.prepare(
-      "SELECT user_id, first_name, username, role FROM users WHERE user_id != ? ORDER BY updated_at DESC LIMIT 15"
-    )
-      .bind(msg.from.id)
-      .all<{ user_id: number; first_name: string | null; username: string | null; role: string }>();
-    const kb = (rows.results ?? []).map((u) => [
-      {
-        text: `${u.role === "admin" ? "👑" : "👤"} ${u.first_name ?? "?"}${u.username ? ` (@${u.username})` : ""}`,
-        callback_data: `asg|${task.id}|${u.user_id}`,
-      },
-    ]);
-    if (kb.length) {
-      await sendMessage(
-        env,
-        msg.chat.id,
-        `🤔 «${escapeHtml(parsed.assignee_name)}» بین کاربرهای بات نبود. تسک ساخته شد ولی فعلاً خودت مسئولش هستی — یکی از این‌ها رو انتخاب کن تا واگذارش کنم:`,
-        { reply_markup: { inline_keyboard: kb } }
-      );
-    }
+    await sendUserPickList(
+      env,
+      msg,
+      `asg|${task.id}`,
+      `🤔 «${escapeHtml(parsed.assignee_name)}» بین کاربرهای بات نبود. تسک ساخته شد ولی فعلاً خودت مسئولش هستی — یکی از این‌ها رو انتخاب کن تا واگذارش کنم:`
+    );
   }
 }
 
@@ -817,12 +947,22 @@ async function createAndAnnounceTask(
   }
   // نکته: خط «🔔 یادآوری» در خود کارت هست — اینجا دوباره تکرارش نمی‌کنیم
 
-  await sendMessage(
+  // 🎴 دومرحله‌ای: اول «تسک ساخته شد»، چند ثانیه بعد همان پیام به کارتِ کامل تبدیل می‌شود
+  const cardText = taskCard(task, creator, fields.assignee, notes.join("\n") || null);
+  const cardKb = { reply_markup: statusKeyboard(task) };
+  const first = await sendMessage(
     env,
     msg.chat.id,
-    `✅ <b>تسک ساخته شد!</b>\n\n${taskCard(task, creator, fields.assignee, notes.join("\n") || null)}`,
-    { reply_markup: statusKeyboard(task) }
+    `✅ <b>تسک ساخته شد!</b> «${escapeHtml(truncate(task.title, 60))}» — 🆔 <b>${faDigits(task.id)}</b>`
   );
+  const msgId = first?.result?.message_id as number | undefined;
+  await sleep(env.CARD_EDIT_DELAY_MS ?? 3000);
+  if (msgId) {
+    const edited = await editMessageText(env, msg.chat.id, msgId, cardText, cardKb);
+    if (!edited?.ok) await sendMessage(env, msg.chat.id, cardText, cardKb); // پیام قابل ویرایش نبود → کارت جدا
+  } else {
+    await sendMessage(env, msg.chat.id, cardText, cardKb);
+  }
 
   // اگر مسئول کس دیگه‌ای است، به خودش هم خبر بده
   if (fields.assignee.user_id !== msg.from.id && fields.assignee.chat_id) {
@@ -837,6 +977,26 @@ async function createAndAnnounceTask(
 }
 
 const PENDING_TTL_MS = 1 * 3_600_000; // جوابِ سؤال‌های باز («تا کی؟» / «چی عوض بشه؟») تا ۱ ساعت اعتبار دارد
+const PICK_TTL_MS = 10 * 60_000; // انتخاب کاربر برای تسک جدید تا ۱۰ دقیقه اعتبار دارد
+
+/** جوابِ «تسک چی براش بسازم؟» بعد از انتخاب کاربر از لیست (ادمین) */
+async function tryPendingPickReply(env: Env, msg: any, text: string): Promise<boolean> {
+  const pp = await getPendingPick(env, msg.from.id);
+  if (!pp) return false;
+  if (Date.now() - Date.parse(pp.created_at) > PICK_TTL_MS) {
+    await deletePendingPick(env, msg.from.id);
+    return false;
+  }
+  const clean = text.replace(/\u200c/g, " ").trim();
+  if (CANCEL_RE.test(clean)) {
+    await deletePendingPick(env, msg.from.id);
+    await sendMessage(env, msg.chat.id, "👌 باشه، بی‌خیال. هر وقت خواستی دوباره: 🗂 مدیریت تسک ← ➕ تسک جدید");
+    return true;
+  }
+  await deletePendingPick(env, msg.from.id);
+  await createTaskFromText(env, msg, text, undefined, pp.assignee_id);
+  return true;
+}
 const CANCEL_RE = /^(بی\s*خیال|بی\s*خیالش|لغو|کنسل|cancel|نه)\s*[!.؟]*$/i;
 
 /** پیامِ «دستورمانند» — جوابِ سؤالِ باز نیست؛ سؤال قبلی را کنار می‌گذارد
@@ -927,23 +1087,24 @@ async function resolveAssignee(
   env: Env,
   name: string,
   creatorId: number
-): Promise<{ user: UserRow; note: string | null; unknownMention: boolean }> {
+): Promise<{ user: UserRow; note: string | null; unknownMention: boolean; found: boolean }> {
   const me = await getUser(env, creatorId);
   const clean = (name || "").trim();
-  if (!clean) return { user: me!, note: null, unknownMention: false };
+  if (!clean) return { user: me!, note: null, unknownMention: false, found: true };
   const lower = clean.replace(/^@/, "").toLowerCase();
-  if (["من", "خودم", "خودمم", "me", "myself", "من خودم"].includes(lower)) return { user: me!, note: null, unknownMention: false };
+  if (["من", "خودم", "خودمم", "me", "myself", "من خودم"].includes(lower)) return { user: me!, note: null, unknownMention: false, found: true };
 
   const byUsername = await findUserByUsername(env, lower);
-  if (byUsername) return { user: byUsername, note: null, unknownMention: false };
+  if (byUsername) return { user: byUsername, note: null, unknownMention: false, found: true };
 
   const byName = await findUserByName(env, clean);
-  if (byName) return { user: byName, note: null, unknownMention: false };
+  if (byName) return { user: byName, note: null, unknownMention: false, found: true };
 
   return {
     user: me!,
-    // اگر با @ شروع می‌شود، یوزرنیمِ ناشناس است → برای ادمین انتخابگر باز می‌شود
+    // اگر با @ شروع می‌شود، یوزرنیمِ ناشناس است
     unknownMention: clean.startsWith("@"),
+    found: false,
     note: clean.startsWith("@")
       ? `یوزرنیم «${escapeHtml(clean)}» بین کاربرهای بات پیدا نشد.`
       : `مسئولِ «${escapeHtml(clean)}» بین کاربرهای بات پیدا نشد؛ فعلاً خودت مسئول شدی. وقتی اون هم با بات حرف زد، با /assign می‌تونی تسک رو بهش واگذار کنی.`,
@@ -1642,6 +1803,126 @@ async function onCallbackQuery(env: Env, cq: any): Promise<void> {
       mode === "register"
         ? "📝 👤 <b>یوزرنیم</b> خود را وارد کن (لاتین/عدد، ۳ تا ۳۲ کاراکتر):"
         : "🔑 👤 <b>یوزرنیم</b> خود را وارد کن:"
+    );
+    return;
+  }
+
+  // 🎴 باز کردن کارت تسک از پیام یادآوری
+  if (parts[0] === "card" && parts.length === 2) {
+    const task = await getTask(env, Number(enDigits(parts[1])));
+    if (!task) {
+      await answerCallbackQuery(env, cq.id, "این تسک حذف شده ❌");
+      return;
+    }
+    await answerCallbackQuery(env, cq.id, "⏳");
+    const creator = await getUser(env, task.creator_id);
+    const assignee = await getUser(env, task.assignee_id);
+    const edited = await editMessageText(env, msg.chat.id, msg.message_id, taskCard(task, creator, assignee), {
+      reply_markup: statusKeyboard(task),
+    });
+    if (!edited?.ok) {
+      // پیامِ یادآوری قابل ویرایش نبود (مثلاً خیلی قدیمی) → کارت جدا ارسال می‌شود
+      await sendMessage(env, msg.chat.id, taskCard(task, creator, assignee), {
+        reply_markup: statusKeyboard(task),
+      });
+    }
+    return;
+  }
+
+  // 🚪 خروج از حساب (تأییدِ دکمه‌ی منو)
+  if (parts[0] === "out" && parts.length === 2) {
+    if (parts[1] === "yes") {
+      await setLoggedIn(env, from.id, false);
+      await deletePendingTask(env, from.id);
+      await deletePendingEdit(env, from.id);
+      await deletePendingPick(env, from.id);
+      await answerCallbackQuery(env, cq.id, "🚪 خارج شدی");
+      await sendMessage(
+        env,
+        msg.chat.id,
+        "🚪 از حسابت خارج شدی.\nثبت‌نامت پابرجاست — با «ورود» و همان یوزرنیم/رمز برمی‌گردی."
+      );
+      await sendAuthWelcome(env, msg.chat.id);
+    } else {
+      await answerCallbackQuery(env, cq.id, "🙂 پس هیچی");
+      const me2 = await getUser(env, from.id);
+      await sendMessage(env, msg.chat.id, "👌 حسابت باز مونده.", { reply_markup: mainKeyboard(me2?.role === "admin") });
+    }
+    return;
+  }
+
+  // 🗑 حذف کاربر (ادمین): انتخاب → تأیید
+  if (parts[0] === "delu" && parts.length === 2) {
+    const requester = await getUser(env, from.id);
+    if (requester?.role !== "admin") {
+      await answerCallbackQuery(env, cq.id, "فقط ادمین 👑");
+      return;
+    }
+    if (Number(parts[1]) === from.id) {
+      await answerCallbackQuery(env, cq.id, "خودت رو نمی‌تونی حذف کنی 🙂");
+      return;
+    }
+    const target = await getUser(env, Number(parts[1]));
+    if (!target) {
+      await answerCallbackQuery(env, cq.id, "کاربر پیدا نشد");
+      return;
+    }
+    await answerCallbackQuery(env, cq.id, "⏳");
+    const n = (await env.DB.prepare("SELECT COUNT(*) AS n FROM tasks WHERE assignee_id = ? OR creator_id = ?").bind(target.user_id, target.user_id).first<{ n: number }>())?.n ?? 0;
+    await sendMessage(
+      env,
+      msg.chat.id,
+      `🗑 کاربر <b>${displayName(target)}</b>${target.role === "admin" ? " (ادمین 👑)" : ""} و <b>${faDigits(n)}</b> تسکِش برای همیشه حذف بشه؟ برنمی‌گرده!`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "آره، حذفش کن 🗑", callback_data: `deluok|${target.user_id}` }, { text: "نه ❌", callback_data: "noop" }],
+          ],
+        },
+      }
+    );
+    return;
+  }
+  if (parts[0] === "deluok" && parts.length === 2) {
+    const requester = await getUser(env, from.id);
+    if (requester?.role !== "admin") {
+      await answerCallbackQuery(env, cq.id, "فقط ادمین 👑");
+      return;
+    }
+    if (Number(parts[1]) === from.id) {
+      await answerCallbackQuery(env, cq.id, "خودت رو نمی‌تونی حذف کنی 🙂");
+      return;
+    }
+    const target = await getUser(env, Number(parts[1]));
+    const n = await deleteUser(env, Number(parts[1]));
+    await answerCallbackQuery(env, cq.id, "🗑 حذف شد");
+    await sendMessage(
+      env,
+      msg.chat.id,
+      `🗑 کاربر ${target ? `<b>${displayName(target)}</b>` : ""} و ${faDigits(n)} تسکِش حذف شد.`
+    );
+    return;
+  }
+
+  // 👤 انتخاب کاربر برای تسکِ جدید (مسیر «برای @»): asg0|<user_id>
+  if (parts[0] === "asg0" && parts.length === 2) {
+    const requester = await getUser(env, from.id);
+    if (requester?.role !== "admin") {
+      await answerCallbackQuery(env, cq.id, "فقط ادمین می‌تونه برای دیگه‌ها تسک بسازه 👑");
+      return;
+    }
+    const target = await getUser(env, Number(parts[1]));
+    if (!target) {
+      await answerCallbackQuery(env, cq.id, "کاربر پیدا نشد");
+      return;
+    }
+    await savePendingPick(env, from.id, msg.chat.id, target.user_id);
+    await answerCallbackQuery(env, cq.id, `👤 ${target.first_name ?? "?"}`);
+    await sendMessage(
+      env,
+      msg.chat.id,
+      `👤 <b>${displayName(target)}</b> انتخاب شد.\n✍️ حالا تسک رو بنویس — مثلاً:\n«طراحی لوگو برای سایت، تا جمعه ساعت ۱۸»\n(لغو: بی‌خیال)`,
+      { reply_markup: taskMenuKeyboard() }
     );
     return;
   }

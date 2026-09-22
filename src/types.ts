@@ -20,9 +20,19 @@ export interface Env {
   /** مشخصات ادمین (سیکرت) — هر که با این‌ها ثبت‌نام کند ادمین است */
   ADMIN_USERNAME?: string;
   ADMIN_PASSWORD?: string;
+  /** تأخیر تبدیل «تسک ساخته شد» به کارت کامل (میلی‌ثانیه؛ در تست ۰) */
+  CARD_EDIT_DELAY_MS?: number;
 }
 
 export type TaskStatus = "not_started" | "in_progress" | "done";
+
+/** ردیف pending_pick — انتخابِ کاربر برای تسکِ جدیدِ ادمین */
+export interface PendingPickRow {
+  user_id: number;
+  chat_id: number;
+  assignee_id: number;
+  created_at: string;
+}
 
 /** ردیف جدول tasks */
 export interface TaskRow {

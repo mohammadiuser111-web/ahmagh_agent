@@ -75,6 +75,7 @@ export class Harness {
       AI_MODEL: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
       ADMIN_USERNAME: ADMIN_USER,
       ADMIN_PASSWORD: ADMIN_PASS,
+      CARD_EDIT_DELAY_MS: 0, // بدون تأخیر تا تست‌ها سریع و قطعی باشند
     } as Env;
 
     // تلگرام ماک
@@ -186,6 +187,14 @@ export class Harness {
   }
   documents(chatId: number) {
     return this.to(chatId).filter((m) => m.kind === "document");
+  }
+  /** پیام‌های ویرایش‌شده (editMessageText — مثلاً تبدیل «تسک ساخته شد» به کارت) */
+  edits(chatId: number) {
+    return this.to(chatId).filter((m) => m.kind === "editMessage");
+  }
+  lastEdit(chatId: number) {
+    const t = this.edits(chatId).map((m) => m.text ?? "");
+    return t[t.length - 1] ?? "";
   }
 
   /** تسک‌ها (برای assertions) */

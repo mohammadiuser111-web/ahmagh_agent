@@ -79,7 +79,7 @@ describe("👑 سناریوهای ادمین (محیط ایزوله)", () => {
     await h.say(ALI, "احمق برای @mmd_user یه تسک بساز: تست غیرمجاز، تا فردا");
     const t = h.tasks().at(-1)!;
     expect(t.assignee_id).toBe(ALI.id); // خودش
-    expect(h.texts(ALI.id).some((x) => x.includes("فقط ادمین"))).toBe(true);
+    expect(h.lastEdit(ALI.id)).toContain("فقط ادمین");
   });
 
   it("منوی ادمین: دکمه‌های ادمین دارد؛ 👥 کاربرها → لیست → تسک‌های علی", async () => {
@@ -88,7 +88,7 @@ describe("👑 سناریوهای ادمین (محیط ایزوله)", () => {
     const kb = JSON.stringify(menu.keyboard ?? {});
     expect(kb).toContain("👥 کاربرها");
     expect(kb).toContain("🌐 تسک‌های همه");
-    expect(kb).toContain("➕ تسک جدید");
+    expect(kb).toContain("🗂 مدیریت تسک");
 
     // علی تسکی دارد که ادمین ببیند
     await h.say(ALI, "احمق یه تسک بساز: تسک علی برای منو، تا فردا");
