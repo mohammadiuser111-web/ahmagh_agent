@@ -145,6 +145,74 @@ describe("🎴 کارتِ تعاملی (ویرایش/حذف روی کارت)", (
   });
 });
 
+describe("🐞 باگ‌های لایو ۱۱:۵۷", () => {
+  it("«ساعت 11:59 یادآوری کن» → یادآوری ۱۱:۵۹ است نه ۱۲:۱۵ (ساعتِ ددلاین)", async () => {
+    // جمله‌ی دقیق کاربر (چندخطی) — دیگر هم سؤال «تا کی؟» نباید بپرسد
+    await h.say(ALI, "یه تسک بساز\nطراحی لندنیگ پیچ برای سایت HOMA\nتا ساعت 12:15 باید تمومش کنم ساعت 11:59 یادآوری کن");
+    const t = h.tasks().at(-1)!;
+    expect(t).toBeTruthy(); // بدون سؤال اضافه ساخته شد
+    expect(t.due_at).toBe(`${todayTehranISO()}T12:15:00+03:30`);
+    expect(t.reminder_type).toBe("once");
+    expect(t.reminder_at).toBe(`${todayTehranISO()}T11:59:00+03:30`);
+
+    // و در زمانِ درست شلیک می‌کند (تیکِ کرونِ بعد از ۱۱:۵۹ = ۱۲:۰۰؛ نه ۱۲:۱۵)
+    const before = h.texts(ALI.id).length;
+    await h.advance(Date.parse(`${todayTehranISO()}T12:00:30+03:30`) - h.now());
+    expect(h.texts(ALI.id).length).toBe(before + 1);
+    expect(h.lastText(ALI.id)).toContain("یادآوری‌ای که خواستی");
+    expect(h.lastText(ALI.id)).toContain("طراحی لندنیگ پیچ");
+  });
+
+  it("«تسک 55» → کارت همان تسک باز می‌شود", async () => {
+    await h.say(ALI, "یه تسک بساز: کارت با شناسه، تا فردا");
+    const t = h.tasks().at(-1)!;
+    await h.say(ALI, `تسک ${t.id}`);
+    const last = h.lastText(ALI.id);
+    expect(last).toContain("کارت با شناسه");
+    expect(last).toContain("وضعیت");
+    // و با «شماره»
+    await h.say(ALI, `تسک شماره ${t.id} رو نشون بده`);
+    expect(h.lastText(ALI.id)).toContain("کارت با شناسه");
+    // ولی «تسک X رو ویرایش کن» همچنان ویرایش است نه نمایش
+    await h.say(ALI, `تسک ${t.id} رو ویرایش کن`);
+    expect(h.lastText(ALI.id)).toContain("چی عوض بشه");
+  });
+
+  it("خروج از حساب: /logout → دوباره درگاه ورود", async () => {
+    await h.say(ALI, "یه تسک بساز: قبل از خروج، تا فردا");
+    await h.say(ALI, "/logout");
+    expect(h.lastText(ALI.id)).toContain("خارج شدی");
+    // حالا پیام عادی → درگاه ورود
+    await h.say(ALI, "یه تسک بساز: بعد از خروج، تا فردا");
+    const last = h.to(ALI.id).filter((m) => m.kind === "message").at(-1)!;
+    expect(JSON.stringify(last.keyboard ?? {})).toContain("auth|reg");
+    expect(h.tasks().length).toBe(1); // تسک جدید ساخته نشد
+    // و دوباره ورود → همه‌چیز برمی‌گردد
+    await h.say(ALI, "/login");
+    await h.say(ALI, "ali_user");
+    await h.say(ALI, "pass1234");
+    expect(h.lastText(ALI.id)).toContain("خوش برگشتی");
+    await h.say(ALI, "یه تسک بساز: بعد از ورود مجدد، تا فردا");
+    expect(h.tasks().length).toBe(2);
+  });
+
+  it("ادمینِ متعلق به دیگری → رد؛ ولی اولینِ ورود با admin/1234 ادمین می‌شود", async () => {
+    // در این صحنه «admin» متعلق به اصغر است → نوآمده نمی‌تواند آن را بگیرد
+    await h.say(NEWBIE, "/login");
+    await h.say(NEWBIE, ADMIN_USER);
+    await h.say(NEWBIE, ADMIN_PASS);
+    expect(h.lastText(NEWBIE.id)).toContain("تعلق دارد");
+    const u = (h.env.DB as any).raw("SELECT role, logged_in FROM users WHERE user_id=2001").get();
+    expect(u.role).toBe("user"); // ادمین نشد
+    // و با حساب خودش مشکل ندارد
+    await h.say(NEWBIE, "بی‌خیال");
+    await h.callback(NEWBIE, "auth|reg");
+    await h.say(NEWBIE, "newbie_two");
+    await h.say(NEWBIE, "pass1234");
+    expect(h.lastText(NEWBIE.id)).toContain("ثبت‌نام کامل شد");
+  });
+});
+
 describe("🐞 باگ‌های لایو ۱۱:۴۰", () => {
   it("«تسک شماره ۵۵، تاریخ پایان تسک رو تغییر بده به فردا ساعت 12» → مستقیم آپدیت (نه لیست!)", async () => {
     await h.say(ALI, "یه تسک بساز: ساخت ایجنت, تا امروز ساعت ۱۲");

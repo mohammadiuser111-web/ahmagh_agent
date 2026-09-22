@@ -33,7 +33,7 @@ export async function setUserCredentials(
   role: string
 ): Promise<void> {
   await env.DB.prepare(
-    "UPDATE users SET username_login = ?, password_hash = ?, role = ? WHERE user_id = ?"
+    "UPDATE users SET username_login = ?, password_hash = ?, role = ?, logged_in = 1 WHERE user_id = ?"
   )
     .bind(usernameLogin, passwordHash, role, userId)
     .run();
@@ -301,6 +301,11 @@ export async function getPendingAuth(env: Env, userId: number): Promise<{ user_i
 
 export async function deletePendingAuth(env: Env, userId: number): Promise<void> {
   await env.DB.prepare("DELETE FROM pending_auth WHERE user_id = ?").bind(userId).run();
+}
+
+/** خروج/بازگشت: ثبت‌نام پابرجا می‌ماند، فقط نشست عوض می‌شود */
+export async function setLoggedIn(env: Env, userId: number, on: boolean): Promise<void> {
+  await env.DB.prepare("UPDATE users SET logged_in = ? WHERE user_id = ?").bind(on ? 1 : 0, userId).run();
 }
 
 export async function setUserRole(env: Env, userId: number, role: string): Promise<void> {

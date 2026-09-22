@@ -20,6 +20,7 @@ import {
   recentUsers,
   savePendingAuth,
   savePendingEdit,
+  setLoggedIn,
   savePendingTask,
   getPendingAuth,
   deletePendingAuth,
@@ -99,6 +100,7 @@ const HELP = `🤖 <b>راهنمای احمق‌ایجنت</b>
 /delete &lt;شناسه&gt; — حذف تسک
 /register &lt;نام‌کاربری&gt; &lt;رمز&gt; — ثبت‌نام 👑 (با مشخصات ادمین → نقش ادمین)
 /whoami — حساب و نقش من
+/logout — خروج از حساب 🚪
 /export — خروجی گزارشی از تسک‌ها (HTML یا PDF)
 /menu — منوی دکمه‌ای 🎛 (ساخت/لیست/حذف/خروجی + بخش ادمین)
 /help — همین راهنما
@@ -127,6 +129,17 @@ const HINT = `من دستیارِ تسک‌هاتم — لازم نیست چیز
 
 راهنمای کامل: /help`;
 
+/** «تسک 55» / «تسک شماره ۵۵» / «تسک ۵۵ رو نشون بده» → شناسه‌ی تسک برای نمایش کارت */
+function detectTaskShow(text: string): number | null {
+  const t = text.replace(/احمق/g, " ").replace(/\u200c/g, " ").trim();
+  const base = /^(?:تسک|تاسک)(?:\s*شماره)?\s*(\d{1,4})(?:\s*(?:رو|را))?\s*(?:نشون|نمایش|باز\s*کن|جزئیات|چیه|چیا|بگو|ده|بده)?[!.؟\s]*$/;
+  const m = t.match(base);
+  if (!m) return null;
+  // اگر فعلِ عملیاتی همراهش بود، نمایش نیست (ویرایش/حذف/ساخت/…)
+  if (/بساز|ایجاد|ساخت|ثبت|حذف|پاک|ویرایش|آپدیت|اپدیت|تغییر|عوض|تموم|یادآوری|یادم/.test(t)) return null;
+  return Number(enDigits(m[1]));
+}
+
 const AUTH_WELCOME = `سلام! من <b>احمق‌ایجنت</b> هستم 🤖
 دستیارِ مدیریت کارهای شما.
 
@@ -144,10 +157,10 @@ async function sendAuthWelcome(env: Env, chatId: number): Promise<void> {
   await sendMessage(env, chatId, AUTH_WELCOME, { reply_markup: authKeyboard() });
 }
 
-/** حسابِ ثبت‌شده؟ (username_login یا password_hash دارد) */
+/** حسابِ ثبت‌شده و داخل‌شده؟ (خروج = logged_in صفر؛ ثبت‌نام پابرجا) */
 async function isAuthed(env: Env, userId: number): Promise<boolean> {
   const u = await getUser(env, userId);
-  return !!(u && (u.username_login || u.password_hash));
+  return !!(u && (u.username_login || u.password_hash) && u.logged_in !== 0);
 }
 
 /** گفت‌وگوی گام‌به‌گام ورود/ثبت‌نام: یوزرنیم → رمز */
@@ -186,6 +199,7 @@ async function tryPendingAuthReply(env: Env, msg: any, text: string): Promise<bo
   const result = await completeAuth(env, msg.from.id, pa.mode as "register" | "login", pa.username, pass);
   if (!result.startsWith("❌")) {
     await deletePendingAuth(env, msg.from.id);
+    await setLoggedIn(env, msg.from.id, true);
     const me = await getUser(env, msg.from.id);
     await sendMessage(env, msg.chat.id, result, { reply_markup: mainKeyboard(me?.role === "admin") });
   } else {
@@ -321,7 +335,7 @@ async function sendAllUsersTasks(env: Env, msg: any): Promise<void> {
   await sendMessage(
     env,
     msg.chat.id,
-    `🌐 <b>تسک‌های بازِ همه</b> (${faDigits(tasks.length)}):\n\n${lines.join("\n")}\n\n⏰ <b>نزدیک‌ترین ددلاین:</b> «${escapeHtml(truncate(nearest.title, 40))}» — ${escapeHtml(nearest.u_name ?? "?")}`
+    `🌐 <b>تسک‌های بازِ همه</b> (${faDigits(tasks.length)}):\n\n${lines.join("\n")}\n\n⏰ <b>نزدیک‌ترین ددلاین:</b> «${escapeHtml(truncate(nearest.title, 40))}» — ${escapeHtml(nearest.u_name ?? "?")} (${humanizeFa(nearest.due_at ? Date.parse(nearest.due_at) : endOfDayMs(nearest.due_date ?? ""))})`
   );
 }
 
@@ -331,6 +345,7 @@ function endOfDayMs(iso: string): number {
 function humanizeFa(dueMs: number): string {
   const h = (dueMs - Date.now()) / 3_600_000;
   if (h < 0) return "گذشته! ⚠️";
+  if (h < 1) return `${faDigits(Math.max(1, Math.round(h * 60)))} دقیقه مونده`;
   if (h < 24) return `${faDigits(Math.max(1, Math.round(h)))} ساعت مونده`;
   return `${faDigits(Math.round(h / 24))} روز مونده`;
 }
@@ -386,6 +401,12 @@ async function onMessage(env: Env, msg: any): Promise<void> {
   const userQuery = detectUserTasksQuery(text);
   if (userQuery) {
     await cmdUserTasksQuery(env, msg, userQuery);
+    return;
+  }
+  // «تسک 55» / «تسک شماره ۵۵ رو نشون بده» → کارتِ همان تسک
+  const showId = detectTaskShow(text);
+  if (showId) {
+    await onCommand(env, msg, `/task ${showId}`);
     return;
   }
 
@@ -454,7 +475,7 @@ async function onCommand(env: Env, msg: any, text: string): Promise<void> {
       await sendMessage(
         env,
         chatId,
-        "🎛 <b>منوی احمق‌ایجنت</b>\nاز دکمه‌های پایین استفاده کن یا طبیعی حرف بزن!",
+        "🎛 <b>منوی احمق‌ایجنت</b>\nاز دکمه‌های پایین استفاده کن یا طبیعی حرف بزن!\n\n🚪 خروج از حساب: /logout",
         { reply_markup: mainKeyboard(me1?.role === "admin") }
       );
       return;
@@ -504,6 +525,17 @@ async function onCommand(env: Env, msg: any, text: string): Promise<void> {
       await sendMessage(env, chatId, "🔑 ورود! 👤 <b>یوزرنیم</b> خود را وارد کن:");
       return;
     }
+    case "/logout":
+    case "/signout":
+      await setLoggedIn(env, msg.from.id, false);
+      await deletePendingTask(env, msg.from.id);
+      await deletePendingEdit(env, msg.from.id);
+      await sendMessage(
+        env,
+        chatId,
+        "🚪 از حسابت خارج شدی.\nثبت‌نامت پابرجاست — با «ورود» و همان یوزرنیم/رمز برمی‌گردی. هر وقت خواستی: /start"
+      );
+      return;
     case "/whoami":
       await cmdWhoami(env, msg);
       return;
@@ -598,11 +630,14 @@ async function createTaskFromText(env: Env, msg: any, text: string, pre?: Parsed
     for (const m of text.matchAll(new RegExp(B + kw + "\\s+((?:\\S+\\s+){0,3}\\S+)", "g"))) {
       const dt = parseRelativeFaDateTime(m[1], today);
       if (dt.date) { date = dt.date; time = dt.time; }
+      else if (dt.time) time = dt.time; // «تا ساعت ۱۲:۱۵» بدون تاریخ — فقط ساعت
     }
     return { date, time };
   };
   const fromC = collect("(?:از|شروع)");
   const toC = collect("(?:تا|سررسید)");
+  // «تا ساعت ۱۲:۱۵» بدون تاریخ → یعنی امروز (سؤال اضافه نپرس!)
+  if (!toC.date && toC.time) toC.date = today;
   let sd: string | null = fromC.date;
   let st: string | null = fromC.time;
   let dd: string | null = toC.date;

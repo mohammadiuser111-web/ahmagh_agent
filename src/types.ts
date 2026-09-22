@@ -58,6 +58,7 @@ export interface UserRow {
   first_name: string | null;
   username_login: string | null;  // نام کاربری ثبت‌نام (اختیاری)
   password_hash: string | null;   // sha256 رمز ثبت‌نام
+  logged_in?: number;             // 0 = خروج از حساب (ثبت‌نام پابرجا می‌ماند)
   role: string;                   // 'admin' | 'user'
 
   chat_id: number | null;

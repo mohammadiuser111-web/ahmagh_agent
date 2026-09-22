@@ -351,11 +351,42 @@ export function parseReminderSpec(text: string, todayISO: string): ReminderSpecF
   // یک‌باره: تاریخ/فردا/امروز + ساعت + فعل یادآوری
   const wantsReminder = /یادم|یادآوری|یاداوری|اعلان|بیدارم|بیدار\s*کن/.test(t);
   if (wantsReminder) {
-    const dt = parseRelativeFaDateTime(t, todayISO);
-    if (dt.time) {
-      const date = dt.date || todayISO;
-      return { type: "once", time: dt.time, interval_hours: null, lead_minutes: null, at: `${date}T${dt.time}:00+03:30` };
+    // ⚠️ ساعتِ «یادآوری» ملاک است، نه اولین ساعتِ متن (ممکن است ساعتِ ددلاین باشد!)
+    const pickTime = (h: string, mm?: string, part?: string) => {
+      const dayMin = parseFaTimeOfDay(`ساعت ${h}${mm ? ":" + mm : ""} ${part ?? ""}`);
+      return dayMin === null ? null : isTime(dayMin);
+    };
+    let time: string | null = null;
+    // ۱) «ساعت ۱۱:۵۹ یادآوری کن» / «۱۰ صبح بیدارم کن»
+    let m = t.match(
+      /(\d{1,2})(?::(\d{2}))?\s*(صبح|ظهر|عصر|شب|بامداد)?\s*(?:رو\s+|را\s+)?(?:یادم|یادآوری|یاداوری|اعلان|بیدارم)/
+    );
+    if (m) time = pickTime(m[1], m[2], m[3]);
+    // ۲) «یادم بنداز ساعت ۹ صبح» — فقط تا قبلِ بندِ «تا/سررسید» بعدی
+    if (!time) {
+      const vm = t.match(/(?:یادم|یادآوری|یاداوری|اعلان|بیدارم|بیدار\s*کن)(.*)$/);
+      if (vm) {
+        const after = vm[1].split(/تا|سررسید/)[0];
+        const am = after.match(/(?:ساعت\s*)?(\d{1,2})(?::(\d{2}))?\s*(صبح|ظهر|عصر|شب|بامداد)?/);
+        if (am) time = pickTime(am[1], am[2], am[3]);
+      }
     }
+    // ۳) فقط وقتی در کل متن یک ساعت هست (اگر چندتاست، احتمالاً یکی‌شان ددلاین است — دست نمی‌زنیم)
+    if (!time) {
+      const times = t.match(/\d{1,2}:\d{2}|ساعت\s*\d{1,2}|\d{1,2}\s*(?:صبح|ظهر|عصر|شب)/g);
+      if (times && times.length === 1) {
+        const dt = parseRelativeFaDateTime(t, todayISO);
+        time = dt.time;
+        if (time) {
+          const date = dt.date || todayISO;
+          return { type: "once", time, interval_hours: null, lead_minutes: null, at: `${date}T${time}:00+03:30` };
+        }
+      }
+      return null; // مبهم — الگوریتم پیش‌فرض
+    }
+    const dt2 = parseRelativeFaDateTime(t, todayISO);
+    const date2 = dt2.date || todayISO;
+    return { type: "once", time, interval_hours: null, lead_minutes: null, at: `${date2}T${time}:00+03:30` };
   }
 
   return null;

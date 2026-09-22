@@ -94,13 +94,30 @@ export async function completeAuth(
       if (!adminPass || password !== adminPass) return "❌ رمز عبور برای این نام کاربری درست نیست. دوباره بگو:";
       role = "admin";
     }
-    await setUserCredentials(env, userId, username, hash, role);
+    try {
+      await setUserCredentials(env, userId, username, hash, role);
+    } catch {
+      return "❌ این نام کاربری قبلاً گرفته شده. یوزرنیم دیگری بگو:";
+    }
     return role === "admin"
       ? "👑 <b>ثبت‌نام ادمین انجام شد!</b>\nحالا می‌تونی برای خودت و بقیه‌ی کاربرها تسک بسازی."
       : `🎉 <b>ثبت‌نام کامل شد!</b> خوش اومدی <b>${escapeHtml(username)}</b>.\nاز همین حالا هرجور که راحتی بگو تا کارهات رو مدیریت کنم 👇`;
   }
 
   // ورود
+  // مشخصاتِ ادمین همیشه وارد می‌شود — حتی اگر هنوز هیچ ردیفی با این نام ثبت‌نشده باشد
+  if (lower === adminUser && adminPass && password === adminPass) {
+    const owner = await findUserByLogin(env, lower);
+    if (owner && owner.user_id !== userId) {
+      return "❌ این حساب ادمین به شخص دیگری تعلق دارد. با حساب خودت وارد شو:";
+    }
+    try {
+      await setUserCredentials(env, userId, username, hash, "admin");
+    } catch {
+      return "❌ این نام کاربری قبلاً گرفته شده. دوباره بگو:";
+    }
+    return "👑 <b>خوش برگشتی ادمین!</b>";
+  }
   const u = await findUserByLogin(env, lower);
   if (!u || !u.password_hash || u.password_hash !== hash) {
     return "❌ نام کاربری یا رمز عبور درست نیست. دوباره بگو:";

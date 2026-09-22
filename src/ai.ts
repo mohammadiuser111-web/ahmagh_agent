@@ -343,7 +343,11 @@ export function heuristicParse(text: string): ParsedTask {
       return { ...H_BASE, intent: "delete_tasks", delete_scope: scope, task_ref: ref };
     }
     // ✏️ ویرایش / تغییر وضعیت
-    if (/ویرایش|آپدیت|اپدیت|تغییر\s*بده|عوض\s*کن|تموم\s*(?:ش\s*)?کن|تمومش\s*کن|انجامش?\s*دادم|تمومش?\s*کردم/.test(t) && hasTaskWord) {
+    // «تموم کن/تمومش کن» فقط به‌عنوان فعلِ دستوری — نه «باید تمومش کنم» (توصیفِ ددلاین!)
+    if (
+      /ویرایش|آپدیت|اپدیت|تغییر\s*بده|عوض\s*کن|تموم(?:ش|شون)?\s*(?:کن(?![\u0600-\u06FF])|کنید)|انجامش?\s*دادم|تمومش?\s*کردم/.test(t) &&
+      hasTaskWord
+    ) {
       const idm = t.match(/(?:تسک|تاسک|کار|شماره)\s*(\d{1,4})/);
       const task_ref = idm ? String(Number(enDigits(idm[1]))) : extractTaskRef(t);
       const fm = t.match(
