@@ -209,6 +209,22 @@ export interface ListTasksOptions {
   status?: "open" | TaskStatus;
 }
 
+/** شمارش‌های کلی برای گزارش مصرف/داشبورد */
+export async function getLocalCounts(env: Env): Promise<{ users: number; tasks: number; openTasks: number; doneTasks: number }> {
+  const r = await env.DB.prepare(
+    `SELECT (SELECT COUNT(*) FROM users) AS users,
+            (SELECT COUNT(*) FROM tasks) AS tasks,
+            (SELECT COUNT(*) FROM tasks WHERE status != 'done') AS openTasks,
+            (SELECT COUNT(*) FROM tasks WHERE status = 'done') AS doneTasks`
+  ).first<any>();
+  return {
+    users: Number(r?.users ?? 0),
+    tasks: Number(r?.tasks ?? 0),
+    openTasks: Number(r?.openTasks ?? 0),
+    doneTasks: Number(r?.doneTasks ?? 0),
+  };
+}
+
 /** همه‌ی کاربرهایی که چت خصوصی دارند (برای گزارش روزانه) */
 export async function allUsersWithChat(env: Env): Promise<UserRow[]> {
   const res = await env.DB.prepare("SELECT * FROM users WHERE chat_id IS NOT NULL").all<UserRow>();

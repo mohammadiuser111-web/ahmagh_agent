@@ -37,6 +37,9 @@
     "TELEGRAM_BOT_USERNAME": "ahmagh_agent_bot",
     // مدل هوش مصنوعی — llama-3.3-70b (رایگان و بدون محدودیت پلن)
     "AI_MODEL": "@cf/meta/llama-4-scout-17b-16e-instruct",
-    "AI_FALLBACK_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+    "AI_FALLBACK_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+    // گزارش مصرف و هزینه (به‌همراه secret «CF_API_TOKEN» با دسترسی آنالیتیکس)
+    "CF_ACCOUNT_ID": "4d67f0848c83ace5ffa115b98bb1b2ee",
+    "D1_DATABASE_ID": "dcf6cf3f-6fa5-4382-956c-ae4614ce7fb7"
   }
 }

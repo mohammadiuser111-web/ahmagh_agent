@@ -33,10 +33,12 @@ import {
   setTaskFields,
   updateTaskStatus,
   upsertUser,
+  getLocalCounts,
 } from "./db";
+import { fetchUsage, renderUsageReport } from "./usage";
 import { extractDueDateTime, extractTask } from "./ai";
 import type { ParsedTask } from "./types";
-import { detectExportRequest, detectListRequest, detectUserTasksQuery } from "./intent";
+import { detectExportRequest, detectListRequest, detectUserTasksQuery , detectUsageQuery } from "./intent";
 import { cmdRegister, cmdWhoami, completeAuth, validateAuthUsername } from "./auth";
 import { STYLE_LABEL, buildHtmlReport, buildReportModel } from "./exporter";
 import type { ExportStyle } from "./exporter";
@@ -99,7 +101,7 @@ const HELP = `🤖 <b>راهنمای احمق‌ایجنت</b>
 🕘 تاریخچه — تسک‌های تموم‌شده + تاریخ انجام
 📊 گزارش — خروجی HTML تک‌فایل: سه تب (لیستی · گزارش · داشبورد) + تم روشن/تیره
 🚪 خروج — ثبت‌نامت می‌ماند؛ با «ورود» برمی‌گردی
-👑 ادمین: 👥 کاربرها · 🌐 تسک‌های همه · 🗑 حذف کاربر
+👑 ادمین: 👥 کاربرها · 🌐 تسک‌های همه · 🗑 حذف کاربر · 📈 مصرف و هزینه
 
 ⌨️ <b>دستورها</b>
 <code>/new متن</code> — ساخت تسک
@@ -110,7 +112,7 @@ const HELP = `🤖 <b>راهنمای احمق‌ایجنت</b>
 <code>/edit آیدی فیلد: مقدار</code> — ویرایش
 <code>/assign آیدی مسئول</code> — واگذاری · <code>/delete آیدی</code> — حذف
 <code>/register یوزرنیم رمز اسم‌مستعار</code> · <code>/alias اسم</code>
-<code>/whoami</code> · <code>/logout</code> · <code>/export</code> · <code>/menu</code> · <code>/help</code>
+<code>/whoami</code> · <code>/logout</code> · <code>/export</code> · <code>/usage</code> · <code>/menu</code> · <code>/help</code>
 
 💡 <b>نکته‌ها</b>
 • تاریخ پایان اجباری است؛ اگر نگی جدا می‌پرسم: «فردا»، «پنجشنبه»، «فردا ساعت ۵ عصر»
@@ -120,6 +122,7 @@ const HELP = `🤖 <b>راهنمای احمق‌ایجنت</b>
 • فقط ادمین برای دیگران تسک می‌سازد؛ ادمین‌ها چند نفر می‌توانند باشند (ورود با admin/1234)
 • هر کس تسکی را که برایش ساخته‌ای انجام دهد، همان لحظه به تو خبر می‌دهم
 • گزارش روزانه: هر روز (به‌جز پنجشنبه و جمعه) ساعت ۸ صبح و ۸ شب، وضعیت تسک‌هات را برایت می‌فرستم
+• «هزینه‌ها چطوره؟» یا /usage — مصرف هوش مصنوعی، ورکر و دیتابیس + چقدر از سهم رایگان مانده (ادمین)
 • گروه: با «احمق» یا منشن صدایم کن · خصوصی: بدون کلیدواژه`;
 
 const HINT = `من دستیارِ تسک‌هاتم — لازم نیست چیزی خاصی بگی، هرجور راحتی بگو:
@@ -276,7 +279,11 @@ function mainKeyboard(isAdmin: boolean) {
   const rows: { text: string }[][] = [
     [{ text: "🗂 مدیریت تسک" }, { text: "📊 گزارش" }],
   ];
-  if (isAdmin) rows.push([{ text: "👥 کاربرها" }, { text: "🌐 تسک‌های همه" }, { text: "🗑 حذف کاربر" }]);
+  if (isAdmin)
+    rows.push(
+      [{ text: "👥 کاربرها" }, { text: "🌐 تسک‌های همه" }, { text: "🗑 حذف کاربر" }],
+      [{ text: "📈 مصرف و هزینه" }]
+    );
   rows.push([{ text: "❓ راهنما" }, { text: "🚪 خروج" }]);
   return { keyboard: rows, resize_keyboard: true, is_persistent: true };
 }
@@ -310,6 +317,7 @@ const MENU_TEXTS: Record<string, string> = {
   "🗑 حذف تسک": "delhint",
   "🔙 بازگشت": "back",
   "🗑 حذف کاربر": "deluser",
+  "📈 مصرف و هزینه": "usage",
 };
 
 /** آیا این متن، برچسبِ یک دکمه‌ی منو است؟ (برای مسیریابی پیش‌نویس‌ها) */
@@ -327,8 +335,8 @@ async function onMenuButton(env: Env, msg: any, text: string): Promise<boolean> 
   const t = norm(text);
   const action = Object.entries(MENU_TEXTS).find(([k]) => norm(k) === t)?.[1];
   if (!action) return false;
-  if (!isAdmin && (action === "users" || action === "all" || action === "deluser")) {
-    await sendMessage(env, msg.chat.id, "این بخش فقط برای ادمین است 👑");
+  if (!isAdmin && (action === "users" || action === "all" || action === "deluser" || action === "usage")) {
+    await sendMessage(env, msg.chat.id, "این بخش فقط برای ادمین است");
     return true;
   }
   switch (action) {
@@ -350,6 +358,9 @@ async function onMenuButton(env: Env, msg: any, text: string): Promise<boolean> 
       return true;
     case "users":
       await sendUserList(env, msg);
+      return true;
+    case "usage":
+      await cmdUsage(env, msg);
       return true;
     case "all":
       await sendAllUsersTasks(env, msg);
@@ -540,6 +551,11 @@ async function onMessage(env: Env, msg: any): Promise<void> {
   if (!isPrivate && !TRIGGER_RE.test(text)) return;
 
   // ۱) نیت‌های قطعی و سریع (بدون AI)
+  // (مصرف قبل از خروجی: «گزارش هزینه» یعنی مصرف، نه فایل تسک‌ها)
+  if (detectUsageQuery(text)) {
+    await cmdUsage(env, msg);
+    return;
+  }
   // (خروجی اول چک می‌شود: «خروجی تسک‌های منو بده» نباید به لیست یا ساخت برسد)
   if (detectExportRequest(text)) {
     await cmdExport(env, msg);
@@ -632,7 +648,7 @@ async function onCommand(env: Env, msg: any, text: string): Promise<void> {
       await sendMessage(
         env,
         chatId,
-        `<b>منوی احمق‌ایجنت</b>\n\n🗂 مدیریت تسک — ساخت، ویرایش، حذف و تسک‌های من\n🕘 تاریخچه — تسک‌های تموم‌شده\n📊 گزارش — خروجی HTML از تسک‌ها\n🚪 خروج — خروج از حساب${isAdmin1 ? "\n👑 ادمین: 👥 کاربرها · 🌐 تسک‌های همه · 🗑 حذف کاربر" : ""}\n\nیا مثل همیشه طبیعی حرف بزن.`,
+        `<b>منوی احمق‌ایجنت</b>\n\n🗂 مدیریت تسک — ساخت، ویرایش، حذف و تسک‌های من\n🕘 تاریخچه — تسک‌های تموم‌شده\n📊 گزارش — خروجی HTML از تسک‌ها\n🚪 خروج — خروج از حساب${isAdmin1 ? "\n👑 ادمین: 👥 کاربرها · 🌐 تسک‌های همه · 🗑 حذف کاربر · 📈 مصرف و هزینه" : ""}\n\nیا مثل همیشه طبیعی حرف بزن.`,
         { reply_markup: mainKeyboard(isAdmin1) }
       );
       return;
@@ -713,6 +729,10 @@ async function onCommand(env: Env, msg: any, text: string): Promise<void> {
     }
     case "/whoami":
       await cmdWhoami(env, msg);
+      return;
+    case "/usage":
+    case "/costs":
+      await cmdUsage(env, msg);
       return;
     case "/export":
     case "/report":
@@ -1484,6 +1504,26 @@ function byNearestDeadline(a: TaskRow, b: TaskRow): number {
 // ============================================================
 // خروجی گزارشی (HTML / PDF)
 // ============================================================
+
+// ============================================================
+// گزارش مصرف و هزینه (Cloudflare Analytics — لحظه‌ای)
+// ============================================================
+
+async function cmdUsage(env: Env, msg: any): Promise<void> {
+  const me = await getUser(env, msg.from.id);
+  if (me?.role !== "admin") {
+    await sendMessage(env, msg.chat.id, "این بخش فقط برای ادمین است.");
+    return;
+  }
+  let snap = null;
+  try {
+    snap = await fetchUsage(env); // چند کوئری GraphQL — ۱ تا ۲ ثانیه
+  } catch (err) {
+    console.warn("[usage] analytics failed:", err);
+  }
+  const local = await getLocalCounts(env);
+  await sendMessage(env, msg.chat.id, renderUsageReport(snap, local));
+}
 
 async function cmdExport(env: Env, msg: any): Promise<void> {
   const me = await getUser(env, msg.from.id);

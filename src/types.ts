@@ -15,6 +15,10 @@ export interface Env {
   TELEGRAM_BOT_USERNAME: string;
   /** «1» = گزارش روزانه‌ی ۸ صبح/شب خاموش (پیش‌فرض: روشن) */
   DIGEST_DISABLED?: string;
+  /** گزارش مصرف: توکن کلادفلر با دسترسی خواندنِ آنالیتیکس (secret) */
+  CF_API_TOKEN?: string;
+  CF_ACCOUNT_ID?: string;
+  D1_DATABASE_ID?: string;
   /** مدل Workers AI برای استخراج تسک — بدون تغییر کد قابل تعویض است */
   AI_MODEL: string;
   /** مدل جایگزین اگر مدل اصلی خطا داد */
