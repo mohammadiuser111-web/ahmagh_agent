@@ -96,10 +96,30 @@ describe("📤 خروجی و فلوهای زبانی (محیط ایزوله)", (
     expect(h.documents(ALI.id).length).toBe(0);
   });
 
-  it("«تاریخچه تسک‌هامو بده» هم به خروجی می‌رود", async () => {
+  it("«تاریخچه تسک‌هامو بده» → تاریخچه‌ی تموم‌شده‌ها (نه خروجی)", async () => {
+    await h.say(ALI, "احمق یه تسک بساز: برای تاریخچه، تا فردا");
+    const t = h.tasks().at(-1)!;
+    await h.callback(ALI, `st|${t.id}|done`);
     await h.say(ALI, "احمق تاریخچه تسک‌هامو بده");
+    const last = h.lastText(ALI.id);
+    expect(last).toContain("تاریخچه");
+    expect(last).toContain("برای تاریخچه");
+    expect(last).toContain("تمام‌شده در");
+    // و خروجی از این مسیر جدا است: «خروجی تسک‌هامو بده» هنوز انتخابگر فرکت می‌آورد
+    await h.say(ALI, "احمق خروجی تسک‌هامو بده");
     const picker = h.to(ALI.id).filter((m) => m.kind === "message" && JSON.stringify(m.keyboard ?? {}).includes("exp|me|0|"));
     expect(picker.length).toBeGreaterThan(0);
+  });
+
+  it("دکمه‌ی منو «🕘 تاریخچه» و /history → تاریخچه با تاریخِ انجام", async () => {
+    await h.say(ALI, "احمق یه تسک بساز: برای تاریخچه‌ی منو، تا فردا");
+    const t = h.tasks().at(-1)!;
+    await h.callback(ALI, `st|${t.id}|done`);
+    await h.say(ALI, "🕘 تاریخچه"); // دکمه‌ی کیبورد
+    expect(h.lastText(ALI.id)).toContain("تاریخچه");
+    expect(h.lastText(ALI.id)).toContain("تمام‌شده در");
+    await h.say(ALI, "/history");
+    expect(h.lastText(ALI.id)).toContain("برای تاریخچه‌ی منو");
   });
 
   it("لیست‌های زبانی: تسک‌های من / تموم‌شده‌ها / همه", async () => {

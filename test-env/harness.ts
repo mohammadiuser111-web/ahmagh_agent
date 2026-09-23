@@ -71,6 +71,7 @@ export class Harness {
         },
       } as unknown as Env["AI"],
       TELEGRAM_BOT_TOKEN: "TEST:TOKEN",
+      DIGEST_DISABLED: "1", // دایجستِ روزانه در تیک‌های زمانیِ تست‌ها خودکار شلیک نشود
       TELEGRAM_BOT_USERNAME: "ahmagh_agent_bot",
       AI_MODEL: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
       ADMIN_USERNAME: ADMIN_USER,

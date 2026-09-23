@@ -221,11 +221,19 @@ describe("🩹 سؤالِ بازِ معلق نباید پیام‌ها را بل
 });
 
 describe("👂 بدون کلیدواژه‌ی «احمق»", () => {
-  it("ساخت و لیست بدون «احمق»", async () => {
+  it("ساخت و لیست بدون «احمق» — کارتِ تسک‌های من با دکمه‌ی هر تسک", async () => {
     await h.say(ALI, "یه تسک بساز: خرید نان، تا فردا");
     expect(h.tasks().length).toBe(1);
     await h.say(ALI, "تسک هامو نشون بده");
+    const last = h.to(ALI.id).filter((m) => m.kind === "message").at(-1)!;
+    expect(last.text).toContain("تسک‌های تو");
+    expect(last.text).toContain("علی");
+    expect(JSON.stringify(last.keyboard ?? {})).toContain("خرید نان"); // دکمه = خود تسک
+    expect(JSON.stringify(last.keyboard ?? {})).toContain(`my|${h.tasks()[0].id}`);
+    // و لمس دکمه → کارت همان تسک
+    await h.callback(ALI, `my|${h.tasks()[0].id}`);
     expect(h.lastText(ALI.id)).toContain("خرید نان");
+    expect(h.lastText(ALI.id)).toContain("وضعیت");
   });
 
   it("سلام و گپ → HINT دوستانه، نه تسک", async () => {

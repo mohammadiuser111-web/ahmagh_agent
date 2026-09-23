@@ -56,6 +56,7 @@ import {
   enDigits,
   faDigits,
   fmtDate,
+  fmtDateTime,
   fmtTimeTehran,
   parseRelativeFaDateTime,
   parseReminderSpec,
@@ -69,25 +70,23 @@ const TRIGGER_RE = /احمق|ahmagh/i;
 /** تأخیر (در تست ۰ تا قطعی و سریع باشد؛ در پروداکشن ۳ ثانیه برای انیمیشن کارت) */
 const sleep = (ms: number) => (ms > 0 ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve());
 
-const WELCOME = `سلام! من <b>احمق‌ایجنت</b> هستم 🤖
-ایجنتِ مدیریت تسک شما — اسمم «احمقه» ولی کارم درسته!
+const WELCOME = `سلام! من <b>احمق‌ایجنت</b> هستم.
+ایجنتِ مدیریت تسک‌های شما.
 
-برای ساختن تسک، فقط طبیعی با من حرف بزن:
+برای ساختن تسک، فقط طبیعی حرف بزن:
 <b>«احمق این تسک رو ایجاد کن: خرید نان، تا فردا»</b>
 
-از حرفت این‌ها رو درمیارم:
-📌 عنوان و توضیحات
-👷 مسئول (اگه اسمش رو بگی)
-📅 تاریخ شروع (اگه نگفی = امروز) و تاریخ پایان (اجباری — اگه نگفی، می‌پرسم!)
-🕐 ساعت هم قبوله: «تا فردا ساعت ۱۰:۳۰ عصر» یا «تا شنبه ۱۲ ظهر»
-🚦 وضعیت اولیه
+از حرفت این‌ها را درمی‌آورم:
+• عنوان، توضیحات و وضعیت
+• مسئول (اگر اسمش را بگی)
+• تاریخ شروع (اگر نگویی = امروز) و پایان (اجباری — اگر نگویی، می‌پرسم)
+• ساعت هم قبول است: «تا فردا ساعت ۱۰:۳۰ عصر»
 
-با رسیدن تاریخ شروع، تسک خودکار «در حال انجام» می‌شه و تا تمومش نکنی هم یادآوری می‌کنم 😈
+با رسیدن تاریخ شروع، تسک خودکار «در حال انجام» می‌شود و تا تمامش نکنی یادآوری می‌کنم.
 
-👑 /register &lt;نام‌کاربری&gt; &lt;رمز&gt; [اسم مستعار] — ثبت‌نام (با مشخصات ادمین → ادمین!)
-
-از منوی پایین هم می‌تونی استفاده کنی 👇 (/menu)
-/help — همه‌ی دستورها`;
+ثبت‌نام: <code>/register نام‌کاربری رمز [اسم‌مستعار]</code>
+همه‌ی دستورها: /help
+یا از منوی پایین استفاده کن — /menu`;
 
 const HELP = `🤖 <b>راهنمای احمق‌ایجنت</b>
 
@@ -97,13 +96,15 @@ const HELP = `🤖 <b>راهنمای احمق‌ایجنت</b>
 
 🎛 <b>منو</b>
 🗂 مدیریت تسک — ساخت · ویرایش · حذف · تسک‌های من
+🕘 تاریخچه — تسک‌های تموم‌شده + تاریخ انجام
 📊 گزارش — خروجی HTML تک‌فایل: سه تب (لیستی · گزارش · داشبورد) + تم روشن/تیره
 🚪 خروج — ثبت‌نامت می‌ماند؛ با «ورود» برمی‌گردی
 👑 ادمین: 👥 کاربرها · 🌐 تسک‌های همه · 🗑 حذف کاربر
 
 ⌨️ <b>دستورها</b>
 <code>/new متن</code> — ساخت تسک
-<code>/tasks</code> — بازهای من · <code>/tasks done|created|all</code>
+<code>/tasks</code> — کارتِ تسک‌های من · <code>/tasks created|all</code>
+<code>/history</code> — تاریخچه‌ی تموم‌شده‌ها
 <code>/task آیدی</code> — کارت تسک
 <code>/done آیدی</code> · <code>/status آیدی وضعیت</code>
 <code>/edit آیدی فیلد: مقدار</code> — ویرایش
@@ -117,7 +118,8 @@ const HELP = `🤖 <b>راهنمای احمق‌ایجنت</b>
 • 🔔 یادآوری دلخواه: «هر روز ساعت ۸»، «هر ۳ ساعت»، «۱ ساعت قبل از ددلاین»، «فردا ۱۰ صبح یادم بنداز»، «یادآوری نکن»
 • اسم مستعار: «برای ایمان یه تسک بساز» — اگر چند ایمان باشد، می‌پرسم کدام
 • فقط ادمین برای دیگران تسک می‌سازد؛ ادمین‌ها چند نفر می‌توانند باشند (ورود با admin/1234)
-• ✅ هر کس تسکی را که برایش ساخته‌ای انجام دهد، همان لحظه به تو خبر می‌دهم
+• هر کس تسکی را که برایش ساخته‌ای انجام دهد، همان لحظه به تو خبر می‌دهم
+• گزارش روزانه: هر روز (به‌جز پنجشنبه و جمعه) ساعت ۸ صبح و ۸ شب، وضعیت تسک‌هات را برایت می‌فرستم
 • گروه: با «احمق» یا منشن صدایم کن · خصوصی: بدون کلیدواژه`;
 
 const HINT = `من دستیارِ تسک‌هاتم — لازم نیست چیزی خاصی بگی، هرجور راحتی بگو:
@@ -132,7 +134,8 @@ const HINT = `من دستیارِ تسک‌هاتم — لازم نیست چیز
 /** «تسک 55» / «تسک شماره ۵۵» / «تسک ۵۵ رو نشون بده» → شناسه‌ی تسک برای نمایش کارت */
 function detectTaskShow(text: string): number | null {
   const t = text.replace(/احمق/g, " ").replace(/\u200c/g, " ").trim();
-  const base = /^(?:تسک|تاسک)(?:\s*شماره)?\s*(\d{1,4})(?:\s*(?:رو|را))?\s*(?:نشون|نمایش|باز\s*کن|جزئیات|چیه|چیا|بگو|ده|بده)?[!.؟\s]*$/;
+  // بعد از شناسه فقط فعل‌های «نمایش» مجازند (رو/را/نشون/نشونم/نمایش/باز کن/جزئیات/چیه/بگو/بده/ده) — تکرارشون هم اوکی
+  const base = /^(?:تسک|تاسک)(?:\s*شماره)?\s*(\d{1,4})(?:\s*(?:رو|را|نشونم|نشون|نمایش|باز\s*کن|جزئیات|چیست|چیه|چیا|بگو|بده|ده))*(?:[!.؟\s]*)$/;
   const m = t.match(base);
   if (!m) return null;
   // اگر فعلِ عملیاتی همراهش بود، نمایش نیست (ویرایش/حذف/ساخت/…)
@@ -191,7 +194,7 @@ async function tryPendingAuthReply(env: Env, msg: any, text: string): Promise<bo
       }
     }
     await savePendingAuth(env, msg.from.id, msg.chat.id, pa.mode as "register" | "login", "password", u);
-    await sendMessage(env, msg.chat.id, `🔒 حالا <b>رمز عبور</b> خود را وارد کن${pa.mode === "register" ? " (حداقل ۴ کاراکتر)" : ""}:`);
+    await sendMessage(env, msg.chat.id, `حالا <b>رمز عبور</b> خود را وارد کن${pa.mode === "register" ? " (حداقل ۴ کاراکتر)" : ""}:`);
     return true;
   }
   // گامِ اسم مستعار (فقط ثبت‌نام — بعد از ساخته‌شدن حساب)
@@ -284,7 +287,7 @@ function taskMenuKeyboard() {
     keyboard: [
       [{ text: "➕ تسک جدید" }, { text: "📋 تسک‌های من" }],
       [{ text: "✏️ ویرایش تسک" }, { text: "🗑 حذف تسک" }],
-      [{ text: "🕘 تموم‌شده‌ها" }, { text: "🔙 بازگشت" }],
+      [{ text: "🕘 تاریخچه" }, { text: "🔙 بازگشت" }],
     ],
     resize_keyboard: true,
     is_persistent: true,
@@ -295,7 +298,7 @@ function taskMenuKeyboard() {
 const MENU_TEXTS: Record<string, string> = {
   "➕ تسک جدید": "new",
   "📋 تسک‌های من": "mine",
-  "🕘 تموم‌شده‌ها": "done",
+  "🕘 تاریخچه": "done",
   "📤 خروجی": "export",
   "👥 کاربرها": "users",
   "🌐 تسک‌های همه": "all",
@@ -337,10 +340,10 @@ async function onMenuButton(env: Env, msg: any, text: string): Promise<boolean> 
       );
       return true;
     case "mine":
-      await sendTaskList(env, msg, "");
+      await myTasksCard(env, msg);
       return true;
     case "done":
-      await sendTaskList(env, msg, "done");
+      await sendHistory(env, msg);
       return true;
     case "export":
       await cmdExport(env, msg);
@@ -542,20 +545,22 @@ async function onMessage(env: Env, msg: any): Promise<void> {
     await cmdExport(env, msg);
     return;
   }
+  // «تسک 55» / «تسک شماره ۵۵ رو نشون بده» → کارتِ همان تسک (قبل از لیستِ عمومی!)
+  const showId = detectTaskShow(text);
+  if (showId) {
+    await onCommand(env, msg, `/task ${showId}`);
+    return;
+  }
   const listMode = detectListRequest(text);
   if (listMode) {
-    await sendTaskList(env, msg, listMode === "all" ? "all" : listMode === "done" ? "done" : "");
+    if (listMode === "done") await sendHistory(env, msg);
+    else if (listMode === "all") await sendTaskList(env, msg, "all");
+    else await myTasksCard(env, msg);
     return;
   }
   const userQuery = detectUserTasksQuery(text);
   if (userQuery) {
     await cmdUserTasksQuery(env, msg, userQuery);
-    return;
-  }
-  // «تسک 55» / «تسک شماره ۵۵ رو نشون بده» → کارتِ همان تسک
-  const showId = detectTaskShow(text);
-  if (showId) {
-    await onCommand(env, msg, `/task ${showId}`);
     return;
   }
 
@@ -588,7 +593,9 @@ async function onMessage(env: Env, msg: any): Promise<void> {
       await cmdNearestDeadline(env, msg);
       return;
     case "list_tasks":
-      await sendTaskList(env, msg, parsed.list_filter === "done" ? "done" : parsed.list_filter === "all" ? "all" : "");
+      if (parsed.list_filter === "done") await sendHistory(env, msg);
+      else if (parsed.list_filter === "all") await sendTaskList(env, msg, "all");
+      else await myTasksCard(env, msg);
       return;
     case "export_report":
       await cmdExport(env, msg);
@@ -625,7 +632,7 @@ async function onCommand(env: Env, msg: any, text: string): Promise<void> {
       await sendMessage(
         env,
         chatId,
-        `🎛 <b>منوی احمق‌ایجنت</b>\n\n🗂 مدیریت تسک — ساخت، ویرایش، حذف و تسک‌های من\n📊 گزارش — خروجی HTML/PDF از تسک‌ها\n🚪 خروج — خروج از حساب${isAdmin1 ? "\n👥 کاربرها · 🌐 تسک‌های همه · 🗑 حذف کاربر (ادمین)" : ""}\n\nیا مثل همیشه طبیعی حرف بزن!`,
+        `<b>منوی احمق‌ایجنت</b>\n\n🗂 مدیریت تسک — ساخت، ویرایش، حذف و تسک‌های من\n🕘 تاریخچه — تسک‌های تموم‌شده\n📊 گزارش — خروجی HTML از تسک‌ها\n🚪 خروج — خروج از حساب${isAdmin1 ? "\n👑 ادمین: 👥 کاربرها · 🌐 تسک‌های همه · 🗑 حذف کاربر" : ""}\n\nیا مثل همیشه طبیعی حرف بزن.`,
         { reply_markup: mainKeyboard(isAdmin1) }
       );
       return;
@@ -642,7 +649,11 @@ async function onCommand(env: Env, msg: any, text: string): Promise<void> {
       await createTaskFromText(env, msg, arg);
       return;
     case "/tasks":
-      await sendTaskList(env, msg, arg);
+      if (arg.trim()) await sendTaskList(env, msg, arg);
+      else await myTasksCard(env, msg);
+      return;
+    case "/history":
+      await sendHistory(env, msg);
       return;
     case "/task":
       await sendTaskInfo(env, msg, arg);
@@ -666,13 +677,13 @@ async function onCommand(env: Env, msg: any, text: string): Promise<void> {
         return;
       }
       await savePendingAuth(env, msg.from.id, chatId, "register", "username", "");
-      await sendMessage(env, chatId, "📝 ثبت‌نام! 👤 <b>یوزرنیم</b> خود را وارد کن (لاتین/عدد، ۳ تا ۳۲ کاراکتر):");
+      await sendMessage(env, chatId, "ثبت‌نام\n\n<b>یوزرنیم</b> خود را وارد کن (لاتین/عدد، ۳ تا ۳۲ کاراکتر):");
       return;
     }
     case "/login":
     case "/signin": {
       await savePendingAuth(env, msg.from.id, chatId, "login", "username", "");
-      await sendMessage(env, chatId, "🔑 ورود! 👤 <b>یوزرنیم</b> خود را وارد کن:");
+      await sendMessage(env, chatId, "ورود\n\n<b>یوزرنیم</b> خود را وارد کن:");
       return;
     }
     case "/logout":
@@ -683,7 +694,7 @@ async function onCommand(env: Env, msg: any, text: string): Promise<void> {
       await sendMessage(
         env,
         chatId,
-        "🚪 از حسابت خارج شدی.\nثبت‌نامت پابرجاست — با «ورود» و همان یوزرنیم/رمز برمی‌گردی. هر وقت خواستی: /start"
+        "از حسابت خارج شدی.\n\nثبت‌نامت پابرجاست — با «ورود» و همان یوزرنیم/رمز برمی‌گردی. هر وقت خواستی: /start"
       );
       return;
     case "/alias": {
@@ -692,12 +703,12 @@ async function onCommand(env: Env, msg: any, text: string): Promise<void> {
         await sendMessage(
           env,
           chatId,
-          "🎭 شکل درست: <code>/alias اسم</code>\nاسم مستعار، چیزی است که ادمین به جای @ برای واگذاری تسک به تو می‌بیند."
+          "شکل درست: <code>/alias اسم</code>\n\nاسم مستعار، چیزی است که ادمین به‌جای @ برای واگذاری تسک به تو می‌بیند."
         );
         return;
       }
       await setAlias(env, msg.from.id, a);
-      await sendMessage(env, chatId, `🎭 اسم مستعارت شد: <b>${escapeHtml(a)}</b>`);
+      await sendMessage(env, chatId, `اسم مستعارت شد: <b>${escapeHtml(a)}</b>`);
       return;
     }
     case "/whoami":
@@ -712,7 +723,7 @@ async function onCommand(env: Env, msg: any, text: string): Promise<void> {
       await cmdDelete(env, msg, arg);
       return;
     default:
-      await sendMessage(env, chatId, "این دستور رو نمی‌شناسم 🤷 روی /help بزن.");
+      await sendMessage(env, chatId, "این دستور را نمی‌شناسم — /help را ببین.");
   }
 }
 
@@ -1015,7 +1026,7 @@ async function createAndAnnounceTask(
   const first = await sendMessage(
     env,
     msg.chat.id,
-    `✅ <b>تسک ساخته شد!</b> «${escapeHtml(truncate(task.title, 60))}» — 🆔 <b>${faDigits(task.id)}</b>`
+    `<b>تسک ساخته شد!</b>\n«${escapeHtml(truncate(task.title, 60))}» — شناسه <b>${faDigits(task.id)}</b>`
   );
   const msgId = first?.result?.message_id as number | undefined;
   await sleep(env.CARD_EDIT_DELAY_MS ?? 3000);
@@ -1031,7 +1042,7 @@ async function createAndAnnounceTask(
     await sendMessage(
       env,
       fields.assignee.chat_id,
-      `${creator?.role === "admin" ? "👑" : "👷"} <b>${displayName(creator)}</b> یه تسک برایت ساخت:\n\n${taskCard(task, creator, fields.assignee)}`,
+      `<b>${displayName(creator)}</b> یک تسک برایت ساخت:\n\n${taskCard(task, creator, fields.assignee)}`,
       { reply_markup: statusKeyboard(task) }
     );
   }
@@ -1186,17 +1197,14 @@ async function sendTaskList(env: Env, msg: any, arg: string): Promise<void> {
   const mode = arg.toLowerCase();
   const fromId = msg.from.id;
   let rows: TaskRow[] = [];
-  let header = "📋 <b>تسک‌های بازِ تو:</b>";
+  let header = "<b>تسک‌های بازِ تو</b>";
 
   if (mode.startsWith("creat")) {
     rows = await listTasks(env, { creator: fromId, status: "open" });
-    header = "📋 <b>تسک‌هایی که خودت ساختی (باز):</b>";
-  } else if (mode.startsWith("done")) {
-    rows = await listTasks(env, { assignee: fromId, status: "done" });
-    header = "🏆 <b>تسک‌های تمام‌شده‌ی تو:</b>";
+    header = "<b>تسک‌هایی که خودت ساختی (باز)</b>";
   } else if (mode.startsWith("all")) {
     rows = await listTasks(env, { involved: fromId });
-    header = "🗂 <b>همه‌ی تسک‌های مرتبط با تو:</b>";
+    header = "<b>همه‌ی تسک‌های مرتبط با تو</b>";
   } else {
     rows = await listTasks(env, { assignee: fromId, status: "open" });
   }
@@ -1205,7 +1213,7 @@ async function sendTaskList(env: Env, msg: any, arg: string): Promise<void> {
     await sendMessage(
       env,
       msg.chat.id,
-      "🎉 همین الان تسکی نداری! یا با «احمق این تسک رو ایجاد کن: …» یکی بساز، یا برو از زندگی لذت ببر 😄"
+      "همین الان تسکی نداری.\n\nیا با «احمق یه تسک بساز: …» یکی بساز، یا از زندگی لذت ببر."
     );
     return;
   }
@@ -1215,7 +1223,61 @@ async function sendTaskList(env: Env, msg: any, arg: string): Promise<void> {
       `${STATUS_EMOJI[t.status]} <b>${faDigits(t.id)}</b> — ${escapeHtml(truncate(t.title, 60))}` +
       (t.due_date ? ` (تا ${fmtDate(t.due_date)})` : "")
   );
-  await sendMessage(env, msg.chat.id, `${header}\n\n${lines.join("\n")}\n\n🔍 جزئیات: /task &lt;شناسه&gt;`);
+  await sendMessage(env, msg.chat.id, `${header}\n\n${lines.join("\n")}\n\nجزئیات: /task &lt;شناسه&gt;`);
+}
+
+/** کارتِ «تسک‌های من» — هر دکمه خودِ یک تسک است: عنوان + وضعیت */
+async function myTasksCard(env: Env, msg: any): Promise<void> {
+  const me = await getUser(env, msg.from.id);
+  const rows = await listTasks(env, { assignee: msg.from.id, status: "open" });
+  if (!rows.length) {
+    await sendMessage(
+      env,
+      msg.chat.id,
+      "همین الان تسکی نداری.\n\nیا با «احمق یه تسک بساز: …» یکی بساز، یا از زندگی لذت ببر."
+    );
+    return;
+  }
+  const shown = rows.slice(0, 20);
+  const kb = shown.map((t) => [
+    {
+      text: `${STATUS_EMOJI[t.status]} ${truncate(t.title, 32)} — ${STATUS_LABEL[t.status]}`.slice(0, 64),
+      callback_data: `my|${t.id}`,
+    },
+  ]);
+  const more = rows.length - shown.length;
+  await sendMessage(
+    env,
+    msg.chat.id,
+    `تسک‌های تو، <b>${escapeHtml(displayName(me))}</b>\n\n${faDigits(rows.length)} تسک باز — روی هرکدوم بزن تا کارتش باز شود${more > 0 ? `\n\n(${faDigits(shown.length)} تای اول؛ ${faDigits(more)} تا دیگر داری)` : ""}`,
+    { reply_markup: { inline_keyboard: kb } }
+  );
+}
+
+/** تاریخچه — تسک‌های تموم‌شده با تاریخِ انجام */
+async function sendHistory(env: Env, msg: any): Promise<void> {
+  const rows = await listTasks(env, { assignee: msg.from.id, status: "done" });
+  if (!rows.length) {
+    await sendMessage(
+      env,
+      msg.chat.id,
+      "هنوز چیزی تموم نکردی.\n\nاولین تسک را بساز و تمامش کن تا تاریخچه بسازی."
+    );
+    return;
+  }
+  const sorted = [...rows].sort((a, b) => (b.completed_at ?? "").localeCompare(a.completed_at ?? ""));
+  const shown = sorted.slice(0, 25);
+  const lines = shown.map(
+    (t) =>
+      `✅ <b>${faDigits(t.id)}</b> — ${escapeHtml(truncate(t.title, 48))}` +
+      (t.completed_at ? `\nتمام‌شده در: ${fmtDateTime(t.completed_at)}` : "")
+  );
+  const more = sorted.length - shown.length;
+  await sendMessage(
+    env,
+    msg.chat.id,
+    `<b>تاریخچه — تسک‌های تموم‌شده</b>\n\n${lines.join("\n\n")}${more > 0 ? `\n\nو ${faDigits(more)} تسک قدیمی‌تر…` : ""}`
+  );
 }
 
 async function sendTaskInfo(env: Env, msg: any, arg: string): Promise<void> {
@@ -1283,7 +1345,7 @@ async function cmdSetStatus(env: Env, msg: any, arg: string): Promise<void> {
   await sendMessage(
     env,
     msg.chat.id,
-    `🚦 وضعیت تسک ${faDigits(id)} الان «${STATUS_LABEL[status]}» است ${STATUS_EMOJI[status]}`
+    `وضعیت تسک ${faDigits(id)}: ${STATUS_EMOJI[status]} <b>${STATUS_LABEL[status]}</b>`
   );
   await notifyCounterpart(env, updated!, msg.from, status);
 }
@@ -1493,7 +1555,7 @@ async function doExport(env: Env, fromId: number, chatId: number, scope: string,
       html,
       `tasks-${name}.html`,
       "text/html; charset=utf-8",
-      `📊 گزارش ${scopeName} (${faDigits(model.total)} تسک) — یک فایل، سه تب (لیستی · گزارش · داشبورد) با تم روشن/تیره | شروع از: ${STYLE_LABEL[st]}`
+      `گزارش ${scopeName} (${faDigits(model.total)} تسک) — یک فایل، سه تب (لیستی · گزارش · داشبورد) با تم روشن/تیره | شروع از: ${STYLE_LABEL[st]}`
     );
   } catch (err) {
     console.error("[export] failed:", err);
@@ -1573,7 +1635,7 @@ async function cmdEdit(env: Env, msg: any, arg: string): Promise<void> {
   await sendMessage(
     env,
     msg.chat.id,
-    `✏️ ✅ ${r.note}\n\n${taskCard(updated, creator, assignee)}`,
+    `${r.note}\n\n${taskCard(updated, creator, assignee)}`,
     { reply_markup: statusKeyboard(updated) }
   );
 }
@@ -1706,7 +1768,7 @@ async function applyTaskFieldEdit(env: Env, msg: any, task: TaskRow, field: stri
   await sendMessage(
     env,
     msg.chat.id,
-    `✏️ ✅ ${r.note}\n\n${taskCard(updated, creator, assignee)}`,
+    `${r.note}\n\n${taskCard(updated, creator, assignee)}`,
     { reply_markup: statusKeyboard(updated) }
   );
 }
@@ -1904,23 +1966,40 @@ async function onCallbackQuery(env: Env, cq: any): Promise<void> {
 
   const parts = String(cq.data || "").split("|");
 
+  // 🗂 دکمه‌ی یک تسک در کارتِ «تسک‌های من»
+  if (parts[0] === "my" && parts.length === 2) {
+    const id = Number(parts[1]);
+    const task = await getTask(env, id);
+    if (!task) {
+      await answerCallbackQuery(env, cq.id, "این تسک حذف شده.");
+      return;
+    }
+    const creator = await getUser(env, task.creator_id);
+    const assignee = await getUser(env, task.assignee_id);
+    await sendMessage(env, msg.chat.id, taskCard(task, creator, assignee), {
+      reply_markup: statusKeyboard(task),
+    });
+    await answerCallbackQuery(env, cq.id, "");
+    return;
+  }
+
   // 🚪 دکمه‌های ورود/ثبت‌نام
   if (parts[0] === "auth" && parts.length === 2) {
     if (await isAuthed(env, from.id)) {
-      await answerCallbackQuery(env, cq.id, "تو که همین الان هم داخل هستی 🙂");
+      await answerCallbackQuery(env, cq.id, "همین الان هم داخل هستی");
       const meA = await getUser(env, from.id);
-      await sendMessage(env, msg.chat.id, "😄", { reply_markup: mainKeyboard(meA?.role === "admin") });
+      await sendMessage(env, msg.chat.id, "سلام دوباره!", { reply_markup: mainKeyboard(meA?.role === "admin") });
       return;
     }
     const mode = parts[1] === "reg" ? "register" : "login";
     await savePendingAuth(env, from.id, msg.chat.id, mode, "username", "");
-    await answerCallbackQuery(env, cq.id, "⏳");
+    await answerCallbackQuery(env, cq.id, "");
     await sendMessage(
       env,
       msg.chat.id,
       mode === "register"
-        ? "📝 👤 <b>یوزرنیم</b> خود را وارد کن (لاتین/عدد، ۳ تا ۳۲ کاراکتر):"
-        : "🔑 👤 <b>یوزرنیم</b> خود را وارد کن:"
+        ? "ثبت‌نام\n\n<b>یوزرنیم</b> خود را وارد کن (لاتین/عدد، ۳ تا ۳۲ کاراکتر):"
+        : "ورود\n\n<b>یوزرنیم</b> خود را وارد کن:"
     );
     return;
   }
@@ -2332,18 +2411,18 @@ async function notifyCounterpart(
   const other = await getUser(env, otherId);
   const changer = await getUser(env, changedBy.id);
   if (!other?.chat_id) return;
-  // 🎉 مسئولِ تسک، آن را تمام کرد → خبرِ شاد به سازنده (مثلاً ادمینی که تسک را برایش ساخته)
+  // مسئولِ تسک، آن را تمام کرد → خبرِ شاد به سازنده (مثلاً ادمینی که تسک را برایش ساخته)
   if (status === "done" && changedBy.id === task.assignee_id) {
     await sendMessage(
       env,
       other.chat_id,
-      `🎉 <b>${escapeHtml(displayName(changer))}</b> تسکِ «${escapeHtml(truncate(task.title, 60))}» رو انجام داد! ✅`
+      `<b>${escapeHtml(displayName(changer))}</b> تسکِ «${escapeHtml(truncate(task.title, 60))}» را انجام داد ✅`
     );
     return;
   }
   await sendMessage(
     env,
     other.chat_id,
-    `🚦 وضعیت تسک «${escapeHtml(truncate(task.title, 60))}» به «${STATUS_LABEL[status]}» ${STATUS_EMOJI[status]} تغییر کرد (توسط ${displayName(changer)}).`
+    `وضعیت تسکِ «${escapeHtml(truncate(task.title, 60))}» به «${STATUS_LABEL[status]}» ${STATUS_EMOJI[status]} تغییر کرد — توسط ${displayName(changer)}.`
   );
 }

@@ -62,30 +62,33 @@ export function taskCard(
   assignee: UserRow | null,
   note?: string | null
 ): string {
-  const lines: string[] = [
-    `🆔 شناسه: <b>${faDigits(task.id)}</b>`,
-    `📌 عنوان: <b>${escapeHtml(truncate(task.title, 120))}</b>`,
-  ];
-  if (task.description) lines.push(`📝 توضیحات: ${escapeHtml(truncate(task.description, 800))}`);
-  lines.push(`🚦 وضعیت: ${STATUS_EMOJI[task.status]} ${STATUS_LABEL[task.status]}`);
-  lines.push(`👤 ایجادکننده: ${displayName(creator)} | 👷 مسئول: ${displayName(assignee)}`);
+  // کارت تمیز: عنوان درشت، بلوک‌های جدا با خط خالی، بدون شلوغیِ ایموجی
+  const lines: string[] = [`<b>${escapeHtml(truncate(task.title, 120))}</b>`, ""];
+  lines.push(`وضعیت: ${STATUS_EMOJI[task.status]} <b>${STATUS_LABEL[task.status]}</b>`);
+  lines.push(`شناسه: <b>${faDigits(task.id)}</b>`);
+  if (task.description) lines.push("", escapeHtml(truncate(task.description, 800)));
+  lines.push("");
+  lines.push(`مسئول: ${displayName(assignee)}`);
+  lines.push(`سازنده: ${displayName(creator)}`);
   lines.push(
-    `🚀 شروع: ${fmtDate(task.start_date)}${task.start_at ? ` — ${fmtTimeTehran(task.start_at)}` : ""} | 🏁 پایان: ${fmtDate(task.due_date)}${task.due_at ? ` — ${fmtTimeTehran(task.due_at)}` : ""}`
+    `شروع: ${fmtDate(task.start_date)}${task.start_at ? ` — ${fmtTimeTehran(task.start_at)}` : ""}`
+  );
+  lines.push(
+    `پایان: ${fmtDate(task.due_date)}${task.due_at ? ` — ${fmtTimeTehran(task.due_at)}` : ""}`
   );
   const remText = reminderSpecText(task);
-  if (remText) lines.push(`🔔 یادآوری: ${remText}`);
+  if (remText) lines.push(`یادآوری: ${remText}`);
   if (task.status === "not_started" && task.auto_start) {
     lines.push(
-      `⏱ شروع خودکار: ${
+      `شروع خودکار: ${
         task.start_at
           ? `${fmtDate(task.start_date)} — ساعت ${fmtTimeTehran(task.start_at)}`
           : fmtDate(task.start_date)
       }`
     );
   }
-  if (task.status === "done" && task.completed_at) lines.push(`🎉 پایان واقعی: ${fmtDateTime(task.completed_at)}`);
-  if (task.reminder_count > 0) lines.push(`🔔 یادآوری‌های ارسال‌شده: ${faDigits(task.reminder_count)}`);
-  if (note) lines.push(`\nℹ️ ${note}`);
+  if (task.status === "done" && task.completed_at) lines.push(`تمام‌شده در: ${fmtDateTime(task.completed_at)}`);
+  if (note) lines.push("", `— ${note}`);
   return lines.join("\n");
 }
 

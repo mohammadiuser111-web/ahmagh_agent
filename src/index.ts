@@ -6,12 +6,15 @@
  * - GET  /set-webhook?key=…    ← ثبت خودکار وبهوک روی آدرس همین ورکر
  * - GET  /health (یا /)        ← سلامت‌سنجی
  *
- * رویداد scheduled (Cron Trigger هر ۱۰ دقیقه) ← موتور یادآوری
+ * رویداد scheduled:
+ * - هر دقیقه ← موتور یادآوری
+ * - ساعت ۸:۰۰ و ۲۰:۰۰ تهران (پنجره‌ی ۵ دقیقه‌ای) ← گزارش روزانه، به‌جز پنجشنبه و جمعه
  */
 import type { Env } from "./types";
 import { handleUpdate } from "./handlers";
 import { cleanupPendingTasks } from "./db";
 import { runAutoStart, runReminders } from "./reminders";
+import { digestWindow, runDigest } from "./digest";
 import { setWebhook } from "./telegram";
 
 export default {
@@ -56,9 +59,13 @@ export default {
   async scheduled(_event, env, ctx) {
     ctx.waitUntil(
       (async () => {
-        await runReminders(env); // موتور یادآوری
+        await runReminders(env); // موتور یادآوری (هر دقیقه)
         await runAutoStart(env); // شروع خودکار تسک‌هایی که تاریخ شروعشان رسیده
         await cleanupPendingTasks(env); // پاک‌سازی پیش‌نویس‌های بی‌جواب
+        // گزارش روزانه ۸ صبح / ۸ شب تهران — داخل پنجره‌ی ۵ دقیقه‌ای، با dedup روزانه
+        // (با متغیر DIGEST_DISABLED=1 قابل خاموش‌کردن است)
+        const win = digestWindow();
+        if (win && env.DIGEST_DISABLED !== "1") await runDigest(env, win);
       })()
     );
   },

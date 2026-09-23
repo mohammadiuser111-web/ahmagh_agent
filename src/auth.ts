@@ -53,8 +53,8 @@ export async function cmdRegister(env: Env, msg: any, arg: string): Promise<void
     await sendMessage(
       env,
       msg.chat.id,
-      "👑 <b>ثبت‌نام ادمین انجام شد!</b>\nحالا می‌تونی برای خودت و بقیه‌ی کاربرها تسک بسازی." +
-        (alias ? `\n🎭 اسم مستعارت: <b>${escapeHtml(alias)}</b>` : "")
+      "<b>ثبت‌نام ادمین انجام شد.</b>\n\nحالا می‌توانی برای خودت و بقیه‌ی کاربرها تسک بسازی." +
+        (alias ? `\n\nاسم مستعارت: <b>${escapeHtml(alias)}</b>` : "")
     );
     return;
   }
@@ -70,8 +70,8 @@ export async function cmdRegister(env: Env, msg: any, arg: string): Promise<void
   await sendMessage(
     env,
     msg.chat.id,
-    "👤 ثبت‌نام شدی (<b>کاربر عادی</b>).\nبرای خودت تسک بساز، لیست کن و خروجی بگیر!" +
-      (alias ? `\n🎭 اسم مستعارت: <b>${escapeHtml(alias)}</b>` : "\n🎭 بعداً با /alias می‌تونی اسم مستعار بگیری.")
+    "ثبت‌نام شدی (<b>کاربر عادی</b>).\n\nبرای خودت تسک بساز، لیست کن و خروجی بگیر." +
+      (alias ? `\n\nاسم مستعارت: <b>${escapeHtml(alias)}</b>` : "\n\nبعداً با /alias می‌توانی اسم مستعار بگیری.")
   );
 }
 
@@ -104,7 +104,7 @@ export async function completeAuth(
       if (!adminPass || password !== adminPass) return "❌ رمز عبور برای این نام کاربری درست نیست. دوباره بگو:";
       await promoteAdmin(env, userId, hash);
       if (alias) await setAlias(env, userId, alias);
-      return "👑 <b>ثبت‌نام ادمین انجام شد!</b>\nحالا می‌تونی برای خودت و بقیه‌ی کاربرها تسک بسازی.";
+      return "<b>ثبت‌نام ادمین انجام شد.</b>\n\nحالا می‌توانی برای خودت و بقیه‌ی کاربرها تسک بسازی.";
     }
     const existing = await findUserByLogin(env, lower);
     if (existing && existing.user_id !== userId) return "❌ این نام کاربری قبلاً گرفته شده. یوزرنیم دیگری بگو:";
@@ -113,14 +113,14 @@ export async function completeAuth(
     } catch {
       return "❌ این نام کاربری قبلاً گرفته شده. یوزرنیم دیگری بگو:";
     }
-    return `🎉 <b>ثبت‌نام کامل شد!</b> خوش اومدی <b>${escapeHtml(username)}</b>.\nاز همین حالا هرجور که راحتی بگو تا کارهات رو مدیریت کنم 👇`;
+    return `<b>ثبت‌نام کامل شد!</b>\n\nخوش آمدی <b>${escapeHtml(username)}</b>.\nاز همین حالا هرجور که راحتی بگو تا کارهات را مدیریت کنم.`;
   }
 
   // ورود
   // 👑 چند ادمین: هر کس admin/1234 بزند ادمین می‌شود — ثبت‌نامِ شخصی‌اش دست نمی‌خورد
   if (lower === adminUser && adminPass && password === adminPass) {
     await promoteAdmin(env, userId, hash);
-    return "👑 <b>خوش برگشتی ادمین!</b>";
+    return "<b>خوش برگشتی ادمین!</b>";
   }
   const u = await findUserByLogin(env, lower);
   if (!u || !u.password_hash || u.password_hash !== hash) {
@@ -131,7 +131,7 @@ export async function completeAuth(
   // اگر از یک اکانت تلگرام دیگری وارد شده، اعتبارنامه به همین اکانت وصل می‌شود
   if (u.user_id !== userId) await setUserCredentials(env, userId, username, hash, role);
   else if (role !== u.role) await setUserRole(env, userId, role);
-  return role === "admin" ? "👑 <b>خوش برگشتی ادمین!</b>" : `👋 <b>خوش برگشتی ${escapeHtml(username)}!</b>`;
+  return role === "admin" ? "<b>خوش برگشتی ادمین!</b>" : `<b>خوش برگشتی ${escapeHtml(username)}!</b>`;
 }
 
 export async function cmdWhoami(env: Env, msg: any): Promise<void> {

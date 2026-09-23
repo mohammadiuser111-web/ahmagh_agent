@@ -173,7 +173,7 @@ describe("🔔 یادآوری داینامیک (محیط ایزوله)", () => {
     const t = h.tasks().at(-1)!;
     await h.say(ALI, `/task ${t.id}`);
     const card = h.lastText(ALI.id);
-    expect(card).toContain("🔔");
+    expect(card).toContain("یادآوری:");
     expect(card).toContain("هر روز ساعت ۰۹:۰۰");
     expect(card).not.toContain("  "); // بدون فاصله‌ی دوبل
   });

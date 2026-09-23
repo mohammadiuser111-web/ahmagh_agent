@@ -13,6 +13,8 @@ export interface Env {
   WEBHOOK_SECRET: string;
   /** یوزرنیم بات (متغیر عمومی) */
   TELEGRAM_BOT_USERNAME: string;
+  /** «1» = گزارش روزانه‌ی ۸ صبح/شب خاموش (پیش‌فرض: روشن) */
+  DIGEST_DISABLED?: string;
   /** مدل Workers AI برای استخراج تسک — بدون تغییر کد قابل تعویض است */
   AI_MODEL: string;
   /** مدل جایگزین اگر مدل اصلی خطا داد */

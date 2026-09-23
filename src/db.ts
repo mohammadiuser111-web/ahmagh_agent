@@ -209,6 +209,12 @@ export interface ListTasksOptions {
   status?: "open" | TaskStatus;
 }
 
+/** همه‌ی کاربرهایی که چت خصوصی دارند (برای گزارش روزانه) */
+export async function allUsersWithChat(env: Env): Promise<UserRow[]> {
+  const res = await env.DB.prepare("SELECT * FROM users WHERE chat_id IS NOT NULL").all<UserRow>();
+  return res.results ?? [];
+}
+
 export async function listTasks(env: Env, o: ListTasksOptions): Promise<TaskRow[]> {
   const conds: string[] = [];
   const params: (string | number)[] = [];

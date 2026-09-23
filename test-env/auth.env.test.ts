@@ -117,7 +117,7 @@ describe("🎴 کارتِ تعاملی (ویرایش/حذف روی کارت)", (
     const first = h.texts(ALI.id).at(-1)!;
     expect(first).toContain("تسک ساخته شد");
     expect(first).toContain("کارت تعاملی");
-    expect(first).toContain("🆔");
+    expect(first).toContain("شناسه");
     // مرحله‌ی ۲: همان پیام به کارت کامل تبدیل می‌شود
     const edit = h.edits(ALI.id).at(-1)!;
     expect(edit.text ?? "").toContain("کارت تعاملی");
@@ -389,10 +389,10 @@ describe("🐞 باگ‌های لایو ۱۱:۴۰", () => {
     expect(h.lastText(ALI.id)).toContain("زمان پایان آپدیت شد");
   });
 
-  it("کارتِ تسکِ با یادآوری، فقط «یک» خط 🔔 دارد (نه دوبار)", async () => {
+  it("کارتِ تسکِ با یادآوری، فقط «یک» خط یادآوری دارد (نه دوبار)", async () => {
     await h.say(ALI, "یه تسک بساز: بدون تکرار، تا فردا — فردا ساعت ۹ صبح یادم بنداز");
     const edit = h.edits(ALI.id).at(-1)!;
-    const count = (edit.text ?? "").split("🔔 یادآوری").length - 1;
+    const count = (edit.text ?? "").split("یادآوری:").length - 1;
     expect(count).toBe(1);
   });
 });

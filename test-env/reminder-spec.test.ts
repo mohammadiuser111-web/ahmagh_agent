@@ -1,7 +1,7 @@
 /**
  * تست‌های یونیتی parseReminderSpec / reminderSpecText — پارسر الگوی یادآوری فارسی
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseReminderSpec, reminderSpecText } from "../src/dates";
 
 const T = "2026-09-22";
@@ -47,13 +47,21 @@ describe("parseReminderSpec", () => {
     expect(parseReminderSpec("۴۵ دقیقه قبلش زنگ بزن", T)).toMatchObject({ type: "before_deadline", lead_minutes: 45 });
   });
 
+  // این دو تست به «اکنونِ» واقعی حساس‌اند (اگر ساعتِ درخواستی گذشته باشد، پارسر به جلو می‌غلتد)
+  // → ساعت سیستم را فریز می‌کنیم تا همیشه قطعی باشند
+  afterEach(() => vi.useRealTimers());
+
   it("یک‌باره: «فردا ساعت ۱۰ صبح یادم بنداز»", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-22T12:00:00Z")); // ۱۵:۳۰ تهران — قبل از ۲۱:۰۰
     const s = parseReminderSpec("فردا ساعت 10 صبح یادم بنداز", T);
     expect(s?.type).toBe("once");
     expect(s?.at).toBe("2026-09-23T10:00:00+03:30");
   });
 
   it("یک‌باره بدون تاریخ → امروز", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-22T12:00:00Z")); // ۱۵:۳۰ تهران — ۲۱:۰۰ هنوز نرسیده
     const s = parseReminderSpec("ساعت 21 یادآوری کن", T);
     expect(s?.type).toBe("once");
     expect(s?.at).toBe(`${T}T21:00:00+03:30`);
