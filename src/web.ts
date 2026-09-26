@@ -506,8 +506,8 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     const html = `<!doctype html><html dir="rtl" lang="fa"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-@font-face{font-family:V;src:url(https://ahmagh.pages.dev/fonts/Vazirmatn-Regular.woff2) format("woff2");font-weight:400}
-@font-face{font-family:V;src:url(https://ahmagh.pages.dev/fonts/Vazirmatn-Bold.woff2) format("woff2");font-weight:700}
+@font-face{font-family:V;src:url(/fonts/Vazirmatn-Regular.woff2) format("woff2");font-weight:400}
+@font-face{font-family:V;src:url(/fonts/Vazirmatn-Bold.woff2) format("woff2");font-weight:700}
 body{font-family:V,Vazirmatn,Tahoma,sans-serif;background:#fff;color:#0f172a;padding:22px;line-height:2;font-size:15px}
 b{color:#4338ca}
 code{background:#eef2ff;padding:2px 8px;border-radius:8px}

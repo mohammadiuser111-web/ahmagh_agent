@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f4f5fa" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e0e0d" media="(prefers-color-scheme: dark)">
+<meta name="description" content="احمق‌ایجنت — دستیار مدیریت تسک، همسان با ربات تلگرام">
 <title>احمق‌ایجنت — مدیریت تسک</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%234f46e5'/%3E%3Ctext x='32' y='44' font-size='34' text-anchor='middle' fill='white' font-family='Tahoma'%3E%D8%A7%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="app.css">
@@ -17,21 +20,21 @@
     <h1>احمق‌ایجنت</h1>
     <p class="auth-sub">همان دستیار تلگرامت — حالا با ظاهری بهتر</p>
 
-    <div class="auth-tabs">
-      <button class="auth-tab active" data-tab="pass">رمز عبور</button>
-      <button class="auth-tab" data-tab="tgcode">کد تلگرام</button>
+    <div class="auth-tabs" role="tablist">
+      <button class="auth-tab active" data-tab="pass" role="tab" aria-selected="true">رمز عبور</button>
+      <button class="auth-tab" data-tab="tgcode" role="tab" aria-selected="false">کد تلگرام</button>
     </div>
 
     <form id="loginForm" autocomplete="on">
       <label class="field">
         <span>نام کاربری</span>
-        <input id="loginUser" name="username" autocomplete="username" dir="ltr" placeholder="username" required>
+        <input id="loginUser" name="username" autocomplete="username" dir="ltr" placeholder="username" autofocus required>
       </label>
       <label class="field">
         <span>رمز عبور</span>
         <input id="loginPass" name="password" type="password" autocomplete="current-password" dir="ltr" placeholder="••••••••" required>
       </label>
-      <div id="loginError" class="form-error hidden"></div>
+      <div id="loginError" class="form-error hidden" role="alert"></div>
       <button class="btn btn-primary btn-block" id="loginBtn" type="submit">ورود</button>
     </form>
 
@@ -39,14 +42,14 @@
       <label class="field">
         <span>یوزرنیم یا اسمت داخل بات</span>
         <input id="tgHandle" placeholder="مثلاً: ali یا @ali_user" autocomplete="off">
-        <div class="hint muted" style="font-size:.74rem;margin-top:.3rem">همان اسم/یوزرنیمی که بات می‌شناسدت</div>
+        <div class="hint muted" style="font-size:11px;margin-top:4px">همان اسم/یوزرنیمی که بات می‌شناسدت</div>
       </label>
       <div id="tgSent" class="form-ok hidden"></div>
       <label class="field hidden" id="codeFieldWrap">
         <span>کد ۶ رقمی که به تلگرامت آمد</span>
-        <input id="tgCode" dir="ltr" inputmode="numeric" maxlength="6" placeholder="------" autocomplete="one-time-code">
+        <input id="tgCode" dir="ltr" inputmode="numeric" maxlength="6" placeholder="••••••" autocomplete="one-time-code">
       </label>
-      <div id="tgError" class="form-error hidden"></div>
+      <div id="tgError" class="form-error hidden" role="alert"></div>
       <button class="btn btn-primary btn-block" id="tgBtn" type="submit">کد بفرست</button>
     </form>
 
@@ -61,38 +64,42 @@
       <div class="logo-badge small">ا</div>
       <div class="brand-name">احمق‌ایجنت</div>
     </div>
-    <nav class="nav" id="sideNav">
-      <button class="nav-item active" data-view="tasks"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h7"/></svg>تسک‌ها</button>
-      <button class="nav-item" data-view="chat"><svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-8 8H4l2.5-2.5A8 8 0 1 1 21 12z"/></svg>چت</button>
-      <button class="nav-item" data-view="history"><svg viewBox="0 0 24 24"><path d="M12 8v4l3 3M3 12a9 9 0 1 0 3-6.7M3 4v4h4"/></svg>تاریخچه</button>
-      <button class="nav-item" data-view="report"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M21 20H3"/></svg>گزارش</button>
-      <button class="nav-item hidden" data-view="admin" id="adminNavBtn"><svg viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z"/></svg>ادمین</button>
+    <nav class="nav" id="sideNav" aria-label="منوی اصلی">
+      <button class="nav-item active" data-view="tasks"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h7"/></svg>تسک‌ها</button>
+      <button class="nav-item" data-view="chat"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a8 8 0 0 1-8 8H4l2.5-2.5A8 8 0 1 1 21 12z"/></svg>چت</button>
+      <button class="nav-item" data-view="history"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v4l3 3M3 12a9 9 0 1 0 3-6.7M3 4v4h4"/></svg>تاریخچه</button>
+      <button class="nav-item" data-view="report"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M21 20H3"/></svg>گزارش</button>
+      <button class="nav-item hidden" data-view="admin" id="adminNavBtn"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z"/></svg>ادمین</button>
     </nav>
     <div class="sidebar-foot">
       <div class="who" id="whoBox"></div>
       <div class="foot-actions">
-        <button class="icon-btn" id="themeBtn" title="تم روشن/تاریک"><svg viewBox="0 0 24 24"><path d="M21 13A8.5 8.5 0 1 1 11 3a7 7 0 0 0 10 10z"/></svg></button>
-        <button class="icon-btn" id="logoutBtn" title="خروج"><svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg></button>
+        <button class="icon-btn" id="themeBtn" title="تغییر تم روشن/تاریک" aria-label="تغییر تم"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 13A8.5 8.5 0 1 1 11 3a7 7 0 0 0 10 10z"/></svg></button>
+        <button class="icon-btn" id="logoutBtn" title="خروج از حساب" aria-label="خروج"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg></button>
       </div>
     </div>
   </aside>
 
   <main class="main">
     <!-- ═══ تسک‌ها ═══ -->
-    <section id="view-tasks" class="view">
+    <section id="view-tasks" class="view" aria-label="تسک‌ها">
       <header class="view-head">
-        <h2 id="greet">تسک‌ها</h2>
-        <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap">
-          <div class="seg hidden" id="taskScope">
-            <button class="seg-item active" data-scope="mine">من</button>
-            <button class="seg-item" data-scope="all">همه</button>
-          </div>
-          <div class="stats" id="statsRow"></div>
+        <div>
+          <h2 id="greet">تسک‌ها</h2>
+          <div class="sub" id="todayLine"></div>
+        </div>
+        <div class="seg hidden" id="taskScope" role="tablist" aria-label="محدوده تسک‌ها">
+          <button class="seg-item active" data-scope="mine" role="tab" aria-selected="true">من</button>
+          <button class="seg-item" data-scope="all" role="tab" aria-selected="false">همه</button>
         </div>
       </header>
 
+      <div class="stats" id="statsRow" aria-label="آمار"></div>
+      <div class="progress" role="progressbar" aria-label="پیشرفت" aria-valuemin="0" aria-valuemax="100"><i id="progressBar" style="width:0%"></i></div>
+
       <div class="quickadd">
-        <input id="quickInput" placeholder="مثل بات حرف بزن… مثلاً: تهیه گزارش فروش تا پنجشنبه، هر روز ساعت ۸ یادم بنداز" autocomplete="off">
+        <span class="spark" aria-hidden="true"></span>
+        <input id="quickInput" placeholder="مثل بات حرف بزن… مثلاً: تهیه گزارش فروش تا پنجشنبه، هر روز ساعت ۸ یادم بنداز" autocomplete="off" aria-label="ساخت تسک با هوش مصنوعی">
         <button class="btn btn-primary" id="quickBtn">ساخت با AI</button>
       </div>
 
@@ -100,49 +107,58 @@
     </section>
 
     <!-- ═══ چت ═══ -->
-    <section id="view-chat" class="view hidden">
+    <section id="view-chat" class="view hidden" aria-label="چت">
       <header class="view-head">
-        <h2>چت با احمق</h2>
-        <span class="muted">همش اینجا — بساز، بپرس، گپ بزن</span>
+        <div>
+          <h2>چت با احمق</h2>
+          <div class="sub">همش اینجا — بساز، بپرس، گپ بزن</div>
+        </div>
       </header>
       <div class="chat-wrap">
-        <div class="chat-scroll" id="chatScroll"></div>
+        <div class="chat-scroll" id="chatScroll" aria-live="polite"></div>
         <div class="chat-bar">
-          <input id="chatInput" placeholder="هرچی می‌خوای بگو… «تسک‌هامو نشون بده» یا سلام و گپ" autocomplete="off">
-          <button class="btn btn-primary" id="chatSend"><svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg></button>
+          <input id="chatInput" placeholder="هرچی می‌خوای بگو… «تسک‌هامو نشون بده» یا سلام و گپ" autocomplete="off" aria-label="پیام به احمق">
+          <button class="btn btn-primary" id="chatSend" aria-label="ارسال پیام"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg></button>
         </div>
         <div class="chat-hint">تسک ساختن را همین‌جا هم می‌گویی — پیش‌نمایشش می‌آید و با یک دکمه ثبت می‌شود</div>
       </div>
     </section>
 
     <!-- ═══ تاریخچه ═══ -->
-    <section id="view-history" class="view hidden">
+    <section id="view-history" class="view hidden" aria-label="تاریخچه">
       <header class="view-head">
-        <h2>تاریخچه</h2>
-        <span class="muted" id="historyCount"></span>
+        <div>
+          <h2>تاریخچه</h2>
+          <div class="sub" id="historyCount"></div>
+        </div>
       </header>
       <div id="historyList" class="groups"></div>
     </section>
 
     <!-- ═══ گزارش ═══ -->
-    <section id="view-report" class="view hidden">
+    <section id="view-report" class="view hidden" aria-label="گزارش">
       <header class="view-head">
-        <h2>گزارش</h2>
-        <div class="seg" id="reportScope">
-          <button class="seg-item active" data-scope="mine">تسک‌های من</button>
-          <button class="seg-item" data-scope="all" id="reportAllBtn">همه</button>
+        <div>
+          <h2>گزارش</h2>
+          <div class="sub">همان خروجی HTML بات — زنده از دیتابیس</div>
+        </div>
+        <div class="seg" id="reportScope" role="tablist" aria-label="محدوده گزارش">
+          <button class="seg-item active" data-scope="mine" role="tab" aria-selected="true">تسک‌های من</button>
+          <button class="seg-item" data-scope="all" id="reportAllBtn" role="tab" aria-selected="false">همه</button>
         </div>
       </header>
       <div class="report-wrap card">
-        <iframe id="reportFrame" title="گزارش"></iframe>
+        <iframe id="reportFrame" title="گزارش تسک‌ها"></iframe>
       </div>
     </section>
 
     <!-- ═══ ادمین ═══ -->
-    <section id="view-admin" class="view hidden">
+    <section id="view-admin" class="view hidden" aria-label="پنل ادمین">
       <header class="view-head">
-        <h2>پنل ادمین</h2>
-        <span class="muted">کاربرها، مصرف و هزینه</span>
+        <div>
+          <h2>پنل ادمین</h2>
+          <div class="sub">کاربرها، مصرف و هزینه</div>
+        </div>
       </header>
       <div class="admin-grid">
         <div class="panel">
@@ -150,43 +166,42 @@
           <div id="usersList"></div>
         </div>
         <div class="panel report-wrap">
-          <h3 style="padding:1.1rem 1.3rem 0;margin:0">📈 مصرف و هزینه</h3>
-          <iframe id="usageFrame" title="مصرف و هزینه"></iframe>
+          <h3>📈 مصرف و هزینه</h3>
+          <iframe id="usageFrame" title="گزارش مصرف و هزینه"></iframe>
         </div>
       </div>
     </section>
   </main>
 
-  <nav class="bottomnav" id="bottomNav">
-    <button class="nav-item active" data-view="tasks"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h7"/></svg>تسک‌ها</button>
-    <button class="nav-item" data-view="chat"><svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-8 8H4l2.5-2.5A8 8 0 1 1 21 12z"/></svg>چت</button>
-    <button class="nav-item" data-view="history"><svg viewBox="0 0 24 24"><path d="M12 8v4l3 3M3 12a9 9 0 1 0 3-6.7M3 4v4h4"/></svg>تاریخچه</button>
-    <button class="nav-item" data-view="report"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M21 20H3"/></svg>گزارش</button>
-    <button class="nav-item hidden" data-view="admin" id="adminNavBtnM"><svg viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z"/></svg>ادمین</button>
+  <nav class="bottomnav" id="bottomNav" aria-label="منوی موبایل">
+    <button class="nav-item active" data-view="tasks"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h7"/></svg>تسک‌ها</button>
+    <button class="nav-item" data-view="chat"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a8 8 0 0 1-8 8H4l2.5-2.5A8 8 0 1 1 21 12z"/></svg>چت</button>
+    <button class="nav-item" data-view="history"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v4l3 3M3 12a9 9 0 1 0 3-6.7M3 4v4h4"/></svg>تاریخچه</button>
+    <button class="nav-item" data-view="report"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M21 20H3"/></svg>گزارش</button>
+    <button class="nav-item hidden" data-view="admin" id="adminNavBtnM"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z"/></svg>ادمین</button>
   </nav>
 </div>
 
-<!-- ═══════════════ مودال پیش‌نمایش ساخت ═══════════════ -->
-<div id="parseModal" class="modal hidden">
+<!-- ═══════════════ مودال‌ها ═══════════════ -->
+<div id="parseModal" class="modal hidden" role="dialog" aria-modal="true" aria-label="پیش‌نمایش تسک">
   <div class="modal-box">
     <h3>پیش‌نمایش تسک</h3>
     <div id="parseBody"></div>
   </div>
 </div>
 
-<!-- ═══════════════ مودال جزئیات/ویرایش ═══════════════ -->
-<div id="taskModal" class="modal hidden">
+<div id="taskModal" class="modal hidden" role="dialog" aria-modal="true" aria-label="جزئیات تسک">
   <div class="modal-box">
     <div class="modal-head">
       <h3 id="taskModalTitle">جزئیات تسک</h3>
-      <button class="icon-btn" id="taskModalClose">✕</button>
+      <button class="icon-btn" id="taskModalClose" aria-label="بستن">✕</button>
     </div>
     <div id="taskBody"></div>
   </div>
 </div>
 
-<div id="toast" class="toast hidden"></div>
-<div id="loader" class="loader hidden"><div class="spin"></div></div>
+<div id="toast" class="toast hidden" role="status"></div>
+<div id="loader" class="loader hidden" aria-label="در حال بارگذاری"><div class="spin"></div></div>
 
 <script src="app.js"></script>
 </body>

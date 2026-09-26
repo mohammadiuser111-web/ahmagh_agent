@@ -49,6 +49,25 @@ function esc(s) {
 }
 
 const STATUS_FA = { not_started: "شروع‌نشده", in_progress: "در حال انجام", done: "تمام‌شده" };
+const VIEW_TITLES = { tasks: "تسک‌ها", chat: "چت", history: "تاریخچه", report: "گزارش", admin: "ادمین" };
+const REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function faToday() {
+  try { return new Intl.DateTimeFormat("fa-IR", { weekday: "long", day: "numeric", month: "long" }).format(new Date()); }
+  catch { return ""; }
+}
+
+/** شمارنده‌ی نرم اعداد آمار */
+function countUp(el, to) {
+  if (REDUCED || !to) { el.textContent = faDigits(to); return; }
+  const t0 = performance.now(), dur = 550;
+  const tick = (t) => {
+    const k = Math.min(1, (t - t0) / dur);
+    el.textContent = faDigits(Math.round(to * (1 - (1 - k) ** 3)));
+    if (k < 1) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
 
 function faDigits(n) { return String(n).replace(/\d/g, (d) => "۰۱۲۳۴۵۶۷۸۹"[d]); }
 
@@ -83,12 +102,16 @@ function taskCard(t) {
   </article>`;
 }
 
-function group(title, cls, tasks, emptyMsg) {
+const EMPTY_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-6 9 2 2 4-4"/></svg>';
+
+function group(title, cls, tasks, emptyMsg, cta) {
   return `
   <section class="group">
     <div class="group-head"><span class="dot ${cls}"></span><h3>${title}</h3><span class="count">${faDigits(tasks.length)}</span></div>
     <div class="task-list">${
-      tasks.length ? tasks.map(taskCard).join("") : `<div class="empty">${emptyMsg}</div>`
+      tasks.length
+        ? tasks.map(taskCard).join("")
+        : `<div class="empty">${EMPTY_SVG}<div>${emptyMsg}</div>${cta ? `<button class="btn btn-primary btn-sm" data-cta="${cta.id}">${cta.label}</button>` : ""}</div>`
     }</div>
   </section>`;
 }
@@ -109,30 +132,46 @@ function renderTasks() {
   const over = open.filter((t) => t.overdue);
   const doing = open.filter((t) => !t.overdue && t.status === "in_progress");
   const todo = open.filter((t) => !t.overdue && t.status === "not_started");
+  const doneN = state.history.length;
+  const total = open.length + doneN;
 
   $("#greet").textContent = state.taskScope === "all" ? "تسک‌های همه" : `سلام، ${state.user.name}`;
+  $("#todayLine").textContent = faToday();
+
   $("#statsRow").innerHTML = `
-    <span class="stat-chip">باز <b>${faDigits(open.length)}</b></span>
-    <span class="stat-chip">در حال انجام <b>${faDigits(doing.length)}</b></span>
-    ${over.length ? `<span class="stat-chip bad">گذشته <b>${faDigits(over.length)}</b></span>` : ""}
-    <span class="stat-chip ok">تمام‌شده <b>${faDigits(state.history.length)}</b></span>`;
+    <div class="stat-card"><span class="ic i-blue">📋</span><div><span class="num" data-n="${open.length}">۰</span><span class="lbl">تسک باز</span></div></div>
+    <div class="stat-card"><span class="ic i-amber">⚡</span><div><span class="num" data-n="${doing.length}">۰</span><span class="lbl">در حال انجام</span></div></div>
+    ${over.length ? `<div class="stat-card"><span class="ic i-red">⏰</span><div><span class="num" data-n="${over.length}">۰</span><span class="lbl">سررسید گذشته</span></div></div>` : ""}
+    <div class="stat-card"><span class="ic i-green">✓</span><div><span class="num" data-n="${doneN}">۰</span><span class="lbl">تمام‌شده</span></div></div>`;
+  $$("#statsRow .num").forEach((el) => countUp(el, Number(el.dataset.n || 0)));
+
+  $("#progressBar").style.width = (total ? Math.round((doneN / total) * 100) : 0) + "%";
 
   $("#taskGroups").innerHTML =
     group("سررسید گذشته", "g-over", over, "چیزی از سررسیدش نگذشته — آفرین") +
     group("در حال انجام", "g-doing", doing, "فعلاً چیزی در دست انجام نیست") +
-    group("شروع‌نشده", "g-todo", todo, "تسک بازی نیست — از بالا یکی بساز");
+    group("شروع‌نشده", "g-todo", todo, "تسک بازی نیست", { id: "quick", label: "ساخت اولین تسک" });
 }
 
 function renderHistory() {
-  $("#historyCount").textContent = state.history.length ? `${faDigits(state.history.length)} تسکِ تمام‌شده` : "";
-  $("#historyList").innerHTML = group("تمام‌شده‌ها", "g-done", state.history, "هنوز هیچی تمام نکردی!");
+  $("#historyCount").textContent = state.history.length ? `${faDigits(state.history.length)} تسکِ تمام‌شده` : "هنوز چیزی تمام نکردی";
+  $("#historyList").innerHTML = group("تمام‌شده‌ها", "g-done", state.history, "اولین قبرستانِ تسک‌ها هنوز خالی است!", { id: "quick", label: "برو بساز" });
 }
 
 async function showView(v) {
   state.view = v;
+  document.title = `${VIEW_TITLES[v] || "احمق‌ایجنت"} · احمق‌ایجنت`;
   $$(".view").forEach((el) => el.classList.add("hidden"));
   $(`#view-${v}`).classList.remove("hidden");
   $$("[data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === v));
+  window.scrollTo({ top: 0, behavior: REDUCED ? "auto" : "smooth" });
+  if (v === "tasks") $("#quickInput")?.focus({ preventScroll: true });
+  if (v === "chat") setTimeout(() => $("#chatInput")?.focus({ preventScroll: true }), 60);
+  if (v === "tasks") {
+    // اسکلتون تا رسیدن داده
+    $("#taskGroups").innerHTML = `<div class="task-list">${'<div class="skel"></div>'.repeat(3)}</div>`;
+    $("#statsRow").innerHTML = `<div class="skel" style="height:64px"></div>`.repeat(0);
+  }
   try {
     if (v === "tasks") { await loadTasks(); await loadHistory(); renderTasks(); }
     if (v === "history") { await loadHistory(); renderHistory(); }
@@ -178,13 +217,16 @@ async function sendChat() {
   state.chatBusy = true;
   input.value = "";
   addMsg("user", esc(text));
+  if (!$("#chatScroll").children.length) {
+    addMsg("bot", `<span class="msg-tag">احمق</span>سلام ${esc(state.user.name)}! من همونم که تو تلگرام می‌شناسی — اینجا هم هرچی بخوای در خدمتم. بگو چه خبر؟`);
+  }
   const typing = addMsg("bot typing", "<i></i><i></i><i></i>");
   try {
     const r = await api("/api/chat", { method: "POST", body: { text } });
     typing.remove();
     if (r.type === "draft" && r.draft) {
       const d = r.draft;
-      addMsg("bot", `اینطوری فهمیدمش:<div class="draft-box">
+      addMsg("bot", `<span class="msg-tag">احمق</span>اینطوری فهمیدمش:<div class="draft-box">
         <div class="kv"><span>عنوان</span><div><b>${esc(d.title)}</b></div>
         ${d.dueDate ? `<span>سررسید</span><div>${esc(d.dueDate)}</div>` : ""}
         ${d.startDate ? `<span>شروع</span><div>${esc(d.startDate)}</div>` : ""}
@@ -196,7 +238,7 @@ async function sendChat() {
       const btn = $("#chatDraftBtn");
       if (btn) btn.onclick = () => { state.pendingText = r.originalText; openParseModal(d); };
     } else {
-      addMsg("bot", esc(r.text || "…"));
+      addMsg("bot", `<span class="msg-tag">احمق</span>${esc(r.text || "…")}`);
     }
   } catch (e) {
     typing.remove();
@@ -365,9 +407,12 @@ async function loadAdmin() {
       .map(
         (u) => `
       <div class="user-row">
-        <div>
-          <div class="u-name">${esc(u.name)} ${u.role === "admin" ? '<span class="badge">ادمین</span>' : ""}</div>
-          <div class="u-meta">${esc(u.username || "—")}</div>
+        <div class="u-line">
+          <div class="avatar s">${esc((u.name || "؟").trim().charAt(0))}</div>
+          <div>
+            <div class="u-name">${esc(u.name)} ${u.role === "admin" ? '<span class="badge">ادمین</span>' : ""}</div>
+            <div class="u-meta">${esc(u.username || "—")}</div>
+          </div>
         </div>
         ${u.id !== state.user.id ? `<button class="btn btn-sm btn-danger" data-deluser="${u.id}">حذف</button>` : `<span class="muted" style="font-size:.75rem">خودت</span>`}
       </div>`
@@ -384,7 +429,8 @@ function showApp() {
   $("#authView").classList.add("hidden");
   $("#appView").classList.remove("hidden");
   const isAdmin = state.user.role === "admin";
-  $("#whoBox").innerHTML = `<b>${esc(state.user.name)}</b>${isAdmin ? ` <span class="role">ادمین</span>` : ""}<br><span class="muted" dir="ltr">${esc(state.user.username || "")}</span>`;
+  const initial = (state.user.name || "ا").trim().charAt(0);
+  $("#whoBox").innerHTML = `<div class="avatar">${esc(initial)}</div><div><b>${esc(state.user.name)}</b>${isAdmin ? ` <span class="role">ادمین</span>` : ""}<br><span class="muted" dir="ltr">${esc(state.user.username || "")}</span></div>`;
   $("#reportAllBtn").classList.toggle("hidden", !isAdmin);
   $("#taskScope").classList.toggle("hidden", !isAdmin);
   $("#adminNavBtn").classList.toggle("hidden", !isAdmin);
@@ -543,6 +589,12 @@ document.addEventListener("DOMContentLoaded", async () => {
       try { await api(`/api/admin/users/${del.dataset.deluser}`, { method: "DELETE" }); toast("حذف شد"); await loadAdmin(); }
       catch (e2) { toast(e2.message, "bad"); }
       finally { loader(false); }
+      return;
+    }
+    const cta = e.target.closest("[data-cta]");
+    if (cta) {
+      e.stopPropagation();
+      if (cta.dataset.cta === "quick") $("#quickInput")?.focus();
       return;
     }
     const card = e.target.closest(".task-card");
