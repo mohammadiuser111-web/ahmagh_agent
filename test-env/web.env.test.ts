@@ -56,6 +56,69 @@ afterEach(() => {
   vi.restoreAllMocks?.();
 });
 
+describe("ورود با کد تلگرام (رمز را یادش نیست)", () => {
+  it("درخواست کد → پیام به تلگرام → تأیید → نشست", async () => {
+    const r1 = await req("POST", "/api/auth/tg-code", { handle: "علی" });
+    expect(r1.status).toBe(200);
+    expect(r1.data.sentTo).toContain("علی");
+    // پیام کد به تلگرامِ علی رفته
+    const codeMsg = h.texts(ALI.id).at(-1) ?? "";
+    expect(codeMsg).toContain("کد ورود به نسخه‌ی وب");
+    const code = (codeMsg.match(/\b(\d{6})\b/) ?? [])[1];
+    expect(code).toBeTruthy();
+    // کد غلط → 401
+    const bad = await req("POST", "/api/auth/tg-verify", { handle: "علی", code: "000000" });
+    expect(bad.status).toBe(401);
+    // کد درست → نشست
+    const r2 = await req("POST", "/api/auth/tg-verify", { handle: "علی", code });
+    expect(r2.status).toBe(200);
+    expect(r2.data.user.name).toContain("علی");
+    const me = await req("GET", "/api/me", undefined, r2.cookie!.split(";")[0]);
+    expect(me.status).toBe(200);
+  });
+
+  it("ناشناس → 404 و بی‌درز", async () => {
+    const r = await req("POST", "/api/auth/tg-code", { handle: "کسی نیستم" });
+    expect(r.status).toBe(404);
+  });
+});
+
+describe("چت — همان مغز بات", () => {
+  it("نیت ساخت → پیش‌نویس؛ نیت فهرست → متن", async () => {
+    const login = await req("POST", "/api/auth/login", { username: "ali", password: "pass123" });
+    const cookie = login.cookie!.split(";")[0];
+
+    const d = await req("POST", "/api/chat", { text: "احمق یه تسک بساز: خرید شیر، تا فردا" }, cookie);
+    expect(d.data.type).toBe("draft");
+    expect(d.data.draft.title).toContain("شیر");
+
+    const l = await req("POST", "/api/chat", { text: "تسک‌هامو نشون بده" }, cookie);
+    expect(l.data.type).toBe("text");
+    expect(l.data.text).toContain("تسک");
+
+    const c = await req("POST", "/api/chat", { text: "سلام" }, cookie);
+    expect(c.data.type).toBe("text");
+    expect(typeof c.data.text).toBe("string");
+  });
+});
+
+describe("ادمین — مصرف و حذف کاربر", () => {
+  it("مصرف فقط ادمین؛ حذف کاربر با تسک‌هایش", async () => {
+    const login = await req("POST", "/api/auth/login", { username: "ali", password: "pass123" });
+    const cookie = login.cookie!.split(";")[0];
+    const forbidden = await req("GET", "/api/admin/usage", undefined, cookie);
+    expect(forbidden.status).toBe(403);
+
+    (h.env.DB as any).raw("UPDATE users SET role = 'admin' WHERE user_id = ?").run(ALI.id);
+    const usage = await req("GET", "/api/admin/usage", undefined, cookie);
+    expect(usage.status).toBe(200);
+    expect(usage.data.html).toContain("مصرف");
+
+    const del = await req("DELETE", `/api/admin/users/${ALI.id}`, undefined, cookie);
+    expect(del.status).toBe(422); // خودش را نمی‌تواند حذف کند
+  });
+});
+
 describe("ورود و نشست", () => {
   it("بدون کوکی → 401", async () => {
     const r = await req("GET", "/api/me");

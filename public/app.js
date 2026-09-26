@@ -12,7 +12,9 @@ const state = {
   history: [],
   users: [],
   view: "tasks",
-  pendingText: "", // متن ساخت سریع تا تأیید
+  taskScope: "mine",
+  pendingText: "",
+  chatBusy: false,
 };
 
 /* ---------------- ابزار ---------------- */
@@ -61,7 +63,7 @@ function taskCard(t) {
     dueChip(t),
     t.reminderLabel ? `<span class="chip c-rem">🔔 ${esc(t.reminderLabel)}</span>` : "",
     t.startDate && t.status === "not_started" ? `<span class="chip">شروع: ${esc(t.startDate)}</span>` : "",
-    state.user.role === "admin" || t.assigneeId !== state.user.id
+    state.taskScope === "all" || t.assigneeId !== state.user.id
       ? `<span class="chip c-asg">مسئول: ${esc(t.assigneeName)}</span>` : "",
   ].filter(Boolean).join("");
   const act =
@@ -93,12 +95,12 @@ function group(title, cls, tasks, emptyMsg) {
 
 /* ---------------- نماها ---------------- */
 async function loadTasks() {
-  const r = await api("/api/tasks?scope=mine&filter=open");
+  const r = await api(`/api/tasks?scope=${state.taskScope}&filter=open`);
   state.tasks = r.tasks;
 }
 
 async function loadHistory() {
-  const r = await api("/api/tasks?scope=mine&filter=done");
+  const r = await api(`/api/tasks?scope=${state.taskScope}&filter=done`);
   state.history = r.tasks;
 }
 
@@ -108,7 +110,7 @@ function renderTasks() {
   const doing = open.filter((t) => !t.overdue && t.status === "in_progress");
   const todo = open.filter((t) => !t.overdue && t.status === "not_started");
 
-  $("#greet").textContent = `سلام، ${state.user.name}`;
+  $("#greet").textContent = state.taskScope === "all" ? "تسک‌های همه" : `سلام، ${state.user.name}`;
   $("#statsRow").innerHTML = `
     <span class="stat-chip">باز <b>${faDigits(open.length)}</b></span>
     <span class="stat-chip">در حال انجام <b>${faDigits(doing.length)}</b></span>
@@ -130,11 +132,12 @@ async function showView(v) {
   state.view = v;
   $$(".view").forEach((el) => el.classList.add("hidden"));
   $(`#view-${v}`).classList.remove("hidden");
-  $$(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.view === v));
+  $$("[data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === v));
   try {
     if (v === "tasks") { await loadTasks(); await loadHistory(); renderTasks(); }
     if (v === "history") { await loadHistory(); renderHistory(); }
     if (v === "report") await loadReport($("#reportScope .seg-item.active")?.dataset.scope || "mine");
+    if (v === "admin") await loadAdmin();
   } catch (e) { toast(e.message, "bad"); }
 }
 
@@ -146,6 +149,62 @@ async function loadReport(scope) {
     $("#reportFrame").srcdoc = r.html;
   } catch (e) { toast(e.message, "bad"); }
   finally { loader(false); }
+}
+
+/* ---------------- چت ---------------- */
+function addMsg(kind, html) {
+  const el = document.createElement("div");
+  el.className = `msg ${kind}`;
+  el.innerHTML = html;
+  $("#chatScroll").appendChild(el);
+  $("#chatScroll").scrollTop = $("#chatScroll").scrollHeight;
+  return el;
+}
+
+function reminderLabel(d) {
+  if (!d.reminder || d.reminder.type === "none") return null;
+  const t = d.reminder;
+  if (t.type === "daily") return `هر روز ساعت ${faDigits(t.time)}`;
+  if (t.type === "every_hours") return `هر ${faDigits(t.interval_hours)} ساعت`;
+  if (t.type === "before_deadline") return `${faDigits(t.lead_minutes / 60)} ساعت قبل از ددلاین`;
+  if (t.type === "once") return `یک‌بار ساعت ${faDigits(t.time)}`;
+  return null;
+}
+
+async function sendChat() {
+  const input = $("#chatInput");
+  const text = input.value.trim();
+  if (!text || state.chatBusy) return;
+  state.chatBusy = true;
+  input.value = "";
+  addMsg("user", esc(text));
+  const typing = addMsg("bot typing", "<i></i><i></i><i></i>");
+  try {
+    const r = await api("/api/chat", { method: "POST", body: { text } });
+    typing.remove();
+    if (r.type === "draft" && r.draft) {
+      const d = r.draft;
+      addMsg("bot", `اینطوری فهمیدمش:<div class="draft-box">
+        <div class="kv"><span>عنوان</span><div><b>${esc(d.title)}</b></div>
+        ${d.dueDate ? `<span>سررسید</span><div>${esc(d.dueDate)}</div>` : ""}
+        ${d.startDate ? `<span>شروع</span><div>${esc(d.startDate)}</div>` : ""}
+        ${reminderLabel(d) ? `<span>یادآوری</span><div>${esc(reminderLabel(d))}</div>` : ""}
+        </div>
+        <button class="btn btn-sm btn-primary" id="chatDraftBtn">بسازش</button>
+        ${!d.dueDate ? `<span class="muted" style="font-size:.75rem"> — فقط تاریخ پایانش را نگفتی؛ موقع ثبت می‌پرسم</span>` : ""}
+      </div>`);
+      const btn = $("#chatDraftBtn");
+      if (btn) btn.onclick = () => { state.pendingText = r.originalText; openParseModal(d); };
+    } else {
+      addMsg("bot", esc(r.text || "…"));
+    }
+  } catch (e) {
+    typing.remove();
+    addMsg("bot", esc(e.message));
+  } finally {
+    state.chatBusy = false;
+    input.focus();
+  }
 }
 
 /* ---------------- ساخت سریع با AI ---------------- */
@@ -162,16 +221,6 @@ async function quickAdd() {
   finally { loader(false); }
 }
 
-function reminderLabel(d) {
-  if (!d.reminder || d.reminder.type === "none") return null;
-  const t = d.reminder;
-  if (t.type === "daily") return `هر روز ساعت ${faDigits(t.time)}`;
-  if (t.type === "every_hours") return `هر ${faDigits(t.interval_hours)} ساعت`;
-  if (t.type === "before_deadline") return `${faDigits(t.lead_minutes / 60)} ساعت قبل از ددلاین`;
-  if (t.type === "once") return `یک‌بار ساعت ${faDigits(t.time)}`;
-  return null;
-}
-
 async function openParseModal(d) {
   const needDue = !d.dueDate;
   const isAdmin = state.user.role === "admin";
@@ -183,9 +232,9 @@ async function openParseModal(d) {
       <span>عنوان</span><div><b>${esc(d.title)}</b></div>
       ${d.description ? `<span>توضیح</span><div>${esc(d.description)}</div>` : ""}
       <span>شروع</span><div>${esc(d.startDate)}${d.startAt ? ` — ساعت ${faDigits(d.startAt.slice(11, 16))}` : ""}</div>
-      <span>سررسید</span><div id="dueCell">${d.dueDate ? `<b>${esc(d.dueDate)}</b>${d.dueAt ? ` — ساعت ${faDigits(d.dueAt.slice(11, 16))}` : ""}` : `<span class="muted">نگفتی!</span>`}</div>
+      <span>سررسید</span><div>${d.dueDate ? `<b>${esc(d.dueDate)}</b>${d.dueAt ? ` — ساعت ${faDigits(d.dueAt.slice(11, 16))}` : ""}` : `<span class="muted">نگفتی!</span>`}</div>
       <span>یادآوری</span><div>${reminderLabel(d) ? `🔔 ${esc(reminderLabel(d))}` : `<span class="muted">ساکت (فقط با خواسته‌ی تو)</span>`}</div>
-      ${isAdmin && state.users.length ? `<span>مسئول</span><div id="asgCell"><select id="asgSelect">
+      ${isAdmin && state.users.length ? `<span>مسئول</span><div><select id="asgSelect">
         ${state.users.map((u) => `<option value="${u.id}" ${u.id === d.assigneeId ? "selected" : ""}>${esc(u.name)}</option>`).join("")}
       </select></div>` : ""}
     </div>
@@ -305,12 +354,43 @@ async function actTask(id, status) {
   finally { loader(false); }
 }
 
+/* ---------------- ادمین ---------------- */
+async function loadAdmin() {
+  if (state.user.role !== "admin") return;
+  loader(true);
+  try {
+    const r = await api("/api/users");
+    state.users = r.users;
+    $("#usersList").innerHTML = state.users
+      .map(
+        (u) => `
+      <div class="user-row">
+        <div>
+          <div class="u-name">${esc(u.name)} ${u.role === "admin" ? '<span class="badge">ادمین</span>' : ""}</div>
+          <div class="u-meta">${esc(u.username || "—")}</div>
+        </div>
+        ${u.id !== state.user.id ? `<button class="btn btn-sm btn-danger" data-deluser="${u.id}">حذف</button>` : `<span class="muted" style="font-size:.75rem">خودت</span>`}
+      </div>`
+      )
+      .join("");
+    const u = await api("/api/admin/usage");
+    $("#usageFrame").srcdoc = u.html;
+  } catch (e) { toast(e.message, "bad"); }
+  finally { loader(false); }
+}
+
 /* ---------------- ورود/خروج ---------------- */
 function showApp() {
   $("#authView").classList.add("hidden");
   $("#appView").classList.remove("hidden");
-  $("#whoBox").innerHTML = `<b>${esc(state.user.name)}</b>${state.user.role === "admin" ? ` <span class="role">ادمین</span>` : ""}<br><span class="muted" dir="ltr">${esc(state.user.username || "")}</span>`;
-  $("#reportAllBtn").classList.toggle("hidden", state.user.role !== "admin");
+  const isAdmin = state.user.role === "admin";
+  $("#whoBox").innerHTML = `<b>${esc(state.user.name)}</b>${isAdmin ? ` <span class="role">ادمین</span>` : ""}<br><span class="muted" dir="ltr">${esc(state.user.username || "")}</span>`;
+  $("#reportAllBtn").classList.toggle("hidden", !isAdmin);
+  $("#taskScope").classList.toggle("hidden", !isAdmin);
+  $("#adminNavBtn").classList.toggle("hidden", !isAdmin);
+  $("#adminNavBtnM").classList.toggle("hidden", !isAdmin);
+  state.taskScope = "mine";
+  $$("#taskScope .seg-item").forEach((x) => x.classList.toggle("active", x.dataset.scope === "mine"));
   showView("tasks");
 }
 
@@ -344,6 +424,47 @@ async function login(e) {
   } finally { btn.disabled = false; }
 }
 
+/** ورود با کد تلگرام — برای رفقایی که رمزشان را یادشان نیست */
+async function tgLogin(e) {
+  e.preventDefault();
+  const err = $("#tgError");
+  const sent = $("#tgSent");
+  err.classList.add("hidden");
+  const btn = $("#tgBtn");
+  btn.disabled = true;
+  try {
+    const handle = $("#tgHandle").value.trim();
+    const code = $("#tgCode").value.trim();
+    if (!handle) throw new Error("اسمت داخل بات را بنویس.");
+    if (!$("#codeFieldWrap").classList.contains("hidden") && !code) throw new Error("کد را بنویس.");
+    if ($("#codeFieldWrap").classList.contains("hidden")) {
+      // مرحله‌ی ۱: درخواست کد
+      const r = await api("/api/auth/tg-code", { method: "POST", body: { handle } });
+      sent.textContent = `کد به تلگرامِ «${r.sentTo}» فرستاده شد — چکش کن ✉️`;
+      sent.classList.remove("hidden");
+      $("#codeFieldWrap").classList.remove("hidden");
+      $("#tgHandle").disabled = true;
+      btn.textContent = "ورود";
+      $("#tgCode").focus();
+    } else {
+      // مرحله‌ی ۲: تأیید کد
+      const r = await api("/api/auth/tg-verify", { method: "POST", body: { handle, code } });
+      state.user = r.user;
+      showApp();
+    }
+  } catch (e2) {
+    err.textContent = e2.message;
+    err.classList.remove("hidden");
+    // اگر کد منقضی/خراب شد، برگرد به مرحله‌ی اول
+    if (/منقضی|خیلی تلاش/.test(e2.message)) {
+      $("#codeFieldWrap").classList.add("hidden");
+      $("#tgHandle").disabled = false;
+      btn.textContent = "کد بفرست";
+      sent.classList.add("hidden");
+    }
+  } finally { btn.disabled = false; }
+}
+
 async function webappLogin() {
   const tg = window.Telegram?.WebApp;
   if (!tg?.initData) return false;
@@ -368,33 +489,62 @@ function applyTheme(t) {
 }
 
 /* ---------------- راه‌اندازی ---------------- */
-/** اسکریپت تلگرام را بدون قفل‌کردن صفحه لود کن — داخل تلگرام سریع می‌آید، بیرونش مهم نیست */
 function loadTelegramScript() {
   return new Promise((resolve) => {
     if (window.Telegram?.WebApp) return resolve();
     const s = document.createElement("script");
     s.src = "https://telegram.org/js/telegram-web-app.js";
     s.onload = () => resolve();
-    s.onerror = () => resolve(); // بیرون از تلگرام/بدون فیلتر — مهم نیست
+    s.onerror = () => resolve();
     document.head.appendChild(s);
   });
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
-  applyTheme(localStorage.getItem("ah_theme") || "dark");
+  applyTheme(localStorage.getItem("ah_theme") || "light");
   $("#themeBtn").onclick = () => applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
   $("#loginForm").addEventListener("submit", login);
+  $("#tgForm").addEventListener("submit", tgLogin);
+  $$(".auth-tab").forEach((t) =>
+    (t.onclick = () => {
+      $$(".auth-tab").forEach((x) => x.classList.remove("active"));
+      t.classList.add("active");
+      const tab = t.dataset.tab;
+      $("#loginForm").classList.toggle("hidden", tab !== "pass");
+      $("#tgForm").classList.toggle("hidden", tab !== "tgcode");
+    })
+  );
   $("#logoutBtn").onclick = logout;
   $("#quickBtn").onclick = quickAdd;
   $("#quickInput").addEventListener("keydown", (e) => { if (e.key === "Enter") quickAdd(); });
+  $("#chatSend").onclick = sendChat;
+  $("#chatInput").addEventListener("keydown", (e) => { if (e.key === "Enter") sendChat(); });
   $$("[data-view]").forEach((b) => (b.onclick = () => showView(b.dataset.view)));
+  $("#taskScope").addEventListener("click", (e) => {
+    const b = e.target.closest(".seg-item"); if (!b) return;
+    $$("#taskScope .seg-item").forEach((x) => x.classList.remove("active"));
+    b.classList.add("active");
+    state.taskScope = b.dataset.scope;
+    showView("tasks");
+  });
   $("#reportScope").addEventListener("click", (e) => {
     const b = e.target.closest(".seg-item"); if (!b) return;
     $$("#reportScope .seg-item").forEach((x) => x.classList.remove("active"));
     b.classList.add("active");
     loadReport(b.dataset.scope);
   });
-  document.addEventListener("click", (e) => {
+  document.addEventListener("click", async (e) => {
+    const del = e.target.closest("[data-deluser]");
+    if (del) {
+      e.stopPropagation();
+      const name = del.closest(".user-row")?.querySelector(".u-name")?.textContent || "این کاربر";
+      if (!confirm(`مطمئنی؟ همه‌ی تسک‌های «${name}» هم حذف می‌شود.`)) return;
+      loader(true);
+      try { await api(`/api/admin/users/${del.dataset.deluser}`, { method: "DELETE" }); toast("حذف شد"); await loadAdmin(); }
+      catch (e2) { toast(e2.message, "bad"); }
+      finally { loader(false); }
+      return;
+    }
     const card = e.target.closest(".task-card");
     const act = e.target.closest("[data-act]");
     if (act) { e.stopPropagation(); actTask(Number(act.dataset.id), act.dataset.act === "start" ? "in_progress" : act.dataset.act === "done" ? "done" : "not_started"); return; }

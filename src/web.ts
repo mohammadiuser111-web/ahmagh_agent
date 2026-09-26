@@ -26,6 +26,8 @@ import type { NewTask } from "./db";
 import { sha256Hex } from "./auth";
 import {
   createTask,
+  deleteUser,
+  findUserByUsername,
   deleteTaskById,
   findUserByLogin,
   getTask,
@@ -40,6 +42,8 @@ import { todayTehranISO, parseRelativeFaDateTime, parseReminderSpec, reminderSpe
 import { displayName, truncate } from "./format";
 import { escapeHtml, sendMessage } from "./telegram";
 import { buildReportModel, buildHtmlReport } from "./exporter";
+import { fetchUsage, renderUsageReport } from "./usage";
+import { getLocalCounts } from "./db";
 
 const SESSION_COOKIE = "ah_session";
 const SESSION_DAYS = 30;
@@ -146,6 +150,91 @@ async function apiWebappLogin(env: Env, body: any): Promise<Response> {
   return withAuth(token, { ok: true, user: publicUser(u) });
 }
 
+/**
+ * ورود با کدِ تلگرام — برای رفقایی که در بات ثبت‌نام کرده‌اند ولی یوزرنیم/رمز را یادشان نیست.
+ * کاربر هندلش را می‌دهد → کد ۶ رقمی به تلگرامش می‌رود → همان را در سایت می‌زند → ورود.
+ */
+async function findUserByHandle(env: Env, handle: string): Promise<UserRow | null> {
+  const t = handle.trim().replace(/^@/, "");
+  if (!t) return null;
+  // ۱) آیدی عددی تلگرام
+  if (/^\d+$/.test(t)) return getUser(env, Number(t));
+  // ۲) یوزرنیم تلگرام
+  const byUsername = await findUserByUsername(env, t.toLowerCase());
+  if (byUsername) return byUsername;
+  // ۳) یوزرنیم ثبت‌نامِ بات
+  const byLogin = await findUserByLogin(env, t);
+  if (byLogin) return byLogin;
+  // ۴) اسم/مستعار — فقط اگر دقیقاً یکی پیدا شود
+  const { findUsersByName } = await import("./db");
+  const matches = await findUsersByName(env, t);
+  return matches.length === 1 ? matches[0] : null;
+}
+
+async function apiTgCodeRequest(env: Env, body: any): Promise<Response> {
+  const handle = String(body?.handle ?? "");
+  const u = await findUserByHandle(env, handle);
+  if (!u) return json({ ok: false, error: "کسی با این اسم/یوزرنیم بین کاربرهای بات پیدا نشد." }, 404);
+  if (!u.chat_id) return json({ ok: false, error: "این کاربر چت فعالی با بات ندارد — اول به بات یک پیام بده." }, 422);
+
+  // حداقل ۶۰ ثانیه بین هر دو درخواست کد
+  const existing = await env.DB.prepare(
+    "SELECT created_at FROM web_login_codes WHERE user_id = ?"
+  ).bind(u.user_id).first<{ created_at: string }>();
+  if (existing && Date.now() - Date.parse(existing.created_at) < 60_000) {
+    return json({ ok: false, error: "کد قبلی همین الان فرستاده شد — کمی صبر کن و تلگرامت را چک کن." }, 429);
+  }
+
+  const code = String(Math.floor(100_000 + Math.random() * 900_000)); // ۶ رقم
+  const codeHash = await sha256Hex(code);
+  const now = new Date();
+  const expires = new Date(now.getTime() + 5 * 60_000);
+  await env.DB.prepare(
+    "INSERT OR REPLACE INTO web_login_codes (user_id, code_hash, attempts, created_at, expires_at) VALUES (?, ?, 0, ?, ?)"
+  ).bind(u.user_id, codeHash, now.toISOString(), expires.toISOString()).run();
+
+  await sendMessage(
+    env,
+    u.chat_id,
+    [
+      "🔑 کد ورود به نسخه‌ی وب",
+      "",
+      `<code>${code}</code>`,
+      "",
+      "این کد فقط ۵ دقیقه اعتبار دارد و فقط برای ورود خودت است؛ به کسی نده.",
+      "اگر این تو نبودی، بی‌خیال این پیام — اتفاقی نمی‌افتد.",
+    ].join("\n")
+  );
+  return json({ ok: true, sentTo: displayName(u) });
+}
+
+async function apiTgCodeVerify(env: Env, body: any): Promise<Response> {
+  const handle = String(body?.handle ?? "");
+  const code = String(body?.code ?? "").trim();
+  const u = await findUserByHandle(env, handle);
+  if (!u) return json({ ok: false, error: "not_found" }, 404);
+  const row = await env.DB.prepare(
+    "SELECT * FROM web_login_codes WHERE user_id = ?"
+  ).bind(u.user_id).first<{ code_hash: string; attempts: number; expires_at: string }>();
+  if (!row) return json({ ok: false, error: "اول کد بخواه." }, 400);
+  if (Date.now() > Date.parse(row.expires_at)) {
+    await env.DB.prepare("DELETE FROM web_login_codes WHERE user_id = ?").bind(u.user_id).run();
+    return json({ ok: false, error: "کد منقضی شد — دوباره کد بگیر." }, 400);
+  }
+  if (row.attempts >= 5) {
+    await env.DB.prepare("DELETE FROM web_login_codes WHERE user_id = ?").bind(u.user_id).run();
+    return json({ ok: false, error: "خیلی تلاش شد — کد پاک شد، دوباره کد بگیر." }, 429);
+  }
+  const hash = await sha256Hex(code);
+  if (hash !== row.code_hash) {
+    await env.DB.prepare("UPDATE web_login_codes SET attempts = attempts + 1 WHERE user_id = ?").bind(u.user_id).run();
+    return json({ ok: false, error: "کد درست نیست." }, 401);
+  }
+  await env.DB.prepare("DELETE FROM web_login_codes WHERE user_id = ?").bind(u.user_id).run();
+  const token = await createSession(env, u.user_id);
+  return withAuth(token, { ok: true, user: publicUser(u) });
+}
+
 async function apiLogout(env: Env, request: Request): Promise<Response> {
   const cookie = request.headers.get("Cookie") ?? "";
   const m = cookie.match(new RegExp(`(?:^|;\\s*)${SESSION_COOKIE}=([A-Za-z0-9]+)`));
@@ -234,6 +323,8 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
   // ---- ورود (بدون نشست) ----
   if (path === "/api/auth/login" && method === "POST") return apiLogin(env, await readBody(request));
   if (path === "/api/auth/webapp" && method === "POST") return apiWebappLogin(env, await readBody(request));
+  if (path === "/api/auth/tg-code" && method === "POST") return apiTgCodeRequest(env, await readBody(request));
+  if (path === "/api/auth/tg-verify" && method === "POST") return apiTgCodeVerify(env, await readBody(request));
   if (path === "/api/auth/logout" && method === "POST") return apiLogout(env, request);
 
   const me = await sessionUser(env, request);
@@ -398,6 +489,42 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     }
   }
 
+  // ---- چت با احمق — همان مسیریابی بات + گفتگوی آزاد ----
+  if (path === "/api/chat" && method === "POST") {
+    const body = await readBody(request);
+    const text = String(body?.text ?? "").trim();
+    if (!text) return json({ ok: false, error: "چیزی ننوشتی!" }, 400);
+    return json({ ok: true, ...(await chatReply(env, me, text)) });
+  }
+
+  // ---- ادمین: گزارش مصرف و هزینه ----
+  if (path === "/api/admin/usage" && method === "GET") {
+    if (!isAdmin(me)) return json({ ok: false, error: "forbidden" }, 403);
+    const snap = await fetchUsage(env);
+    const local = await getLocalCounts(env);
+    const body = renderUsageReport(snap, local);
+    const html = `<!doctype html><html dir="rtl" lang="fa"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+@font-face{font-family:V;src:url(https://ahmagh.pages.dev/fonts/Vazirmatn-Regular.woff2) format("woff2");font-weight:400}
+@font-face{font-family:V;src:url(https://ahmagh.pages.dev/fonts/Vazirmatn-Bold.woff2) format("woff2");font-weight:700}
+body{font-family:V,Vazirmatn,Tahoma,sans-serif;background:#fff;color:#0f172a;padding:22px;line-height:2;font-size:15px}
+b{color:#4338ca}
+code{background:#eef2ff;padding:2px 8px;border-radius:8px}
+</style></head><body>${body}</body></html>`;
+    return json({ ok: true, html });
+  }
+
+  // ---- ادمین: حذف کاربر ----
+  const mDelUser = path.match(/^\/api\/admin\/users\/(\d+)$/);
+  if (mDelUser && method === "DELETE") {
+    if (!isAdmin(me)) return json({ ok: false, error: "forbidden" }, 403);
+    const uid = Number(mDelUser[1]);
+    if (uid === me.user_id) return json({ ok: false, error: "خودت را نمی‌توانی حذف کنی!" }, 422);
+    const removed = await deleteUser(env, uid);
+    return json({ ok: true, removedTasks: removed });
+  }
+
   // ---- بچسباندن دوباره‌ی وبهوک (ادمین؛ برای تغییر دامنه) ----
   if (path === "/api/admin/rebind-webhook" && method === "POST") {
     if (!isAdmin(me)) return json({ ok: false, error: "forbidden" }, 403);
@@ -426,6 +553,91 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
   }
 
   return json({ ok: false, error: "not_found" }, 404);
+}
+
+// ============================================================
+// چت — همان مغز بات: نیت را می‌فهمد، جواب می‌دهد؛ اگر هم حرف
+// آزاد باشد با شخصیتِ «احمق» جواب می‌دهد.
+// ============================================================
+
+interface ChatReply {
+  type: "text" | "draft";
+  text?: string;
+  draft?: unknown;
+  originalText?: string;
+}
+
+async function chatReply(env: Env, me: UserRow, text: string): Promise<ChatReply> {
+  const known = await recentUsersText(env);
+  const parsed = await extractTask(env, text, known);
+
+  if (parsed.intent === "create_task" && parsed.title) {
+    const draft = await buildDraft(env, me, text, "");
+    if (draft) return { type: "draft", draft, originalText: text };
+  }
+
+  if (parsed.intent === "list_tasks") {
+    const tasks = await listTasks(env, { involved: me.user_id, status: "open" });
+    if (!tasks.length) return { type: "text", text: "فعلاً هیچ تسک بازی نداری — یکی بساز که کار داشته باشیم!" };
+    const names = await nameMap(env, tasks.flatMap((t) => [t.assignee_id, t.creator_id]));
+    const lines = tasks.slice(0, 10).map((t) => {
+      const due = t.due_date ? ` — ${fmtDate(t.due_date)}${t.due_at ? ` ساعت ${t.due_at.slice(11, 16)}` : ""}` : "";
+      return `• ${truncate(t.title, 50)}${due}`;
+    });
+    return {
+      type: "text",
+      text: `تسک‌های بازت (${tasks.length}):\n${lines.join("\n")}${tasks.length > 10 ? "\n…" : ""}`,
+    };
+  }
+
+  if (parsed.intent === "nearest_deadline") {
+    const tasks = await listTasks(env, { involved: me.user_id, status: "open" });
+    const withDue = tasks
+      .filter((t) => t.due_date)
+      .sort((a, b) => (a.due_at ?? `${a.due_date}T23:59`).localeCompare(b.due_at ?? `${b.due_date}T23:59`));
+    if (!withDue.length) return { type: "text", text: "هیچ ددلاینی نداری — یا خیلی سرحالی یا خیتی بی‌برنامه!" };
+    const t = withDue[0];
+    return { type: "text", text: `نزدیک‌ترین ددلاین: «${truncate(t.title, 60)}» — ${fmtDate(t.due_date!)}${t.due_at ? ` ساعت ${t.due_at.slice(11, 16)}` : ""}` };
+  }
+
+  if (parsed.intent === "delete_tasks" || parsed.intent === "update_task" || parsed.intent === "export_report" || parsed.intent === "user_tasks_query") {
+    return {
+      type: "text",
+      text: "این کار را از صفحه‌ی «تسک‌ها» یا «گزارش» با چند کلیک انجام بده — آنجا مطمئن‌تر و سریع‌تر است.",
+    };
+  }
+
+  // گفتگوی آزاد — با شخصیتِ همیشگی
+  const tasks = await listTasks(env, { involved: me.user_id, status: "open" });
+  const taskSummary = tasks.length
+    ? tasks.slice(0, 6).map((t) => `- ${truncate(t.title, 40)}${t.due_date ? ` (تا ${t.due_date})` : ""}`).join("\n")
+    : "- هیچ تسک بازی ندارد";
+  const system = [
+    "تو «احمق‌ایجنت» هستی؛ دستیارِ مدیریت تسکِ یک خانواده/گروه کوچک فارسی‌زبان.",
+    "شخصیت: صمیمی، بامزه، کمی شیطنت، ولی دقیق و کاربردی. به کاربر «تو» می‌گویی و اسمش را صدا می‌زنی.",
+    "جواب‌ها کوتاه (حداکثر ۳-۴ جمله)، محاوره‌ای و مفید. ایموجی کم و هدفمند.",
+    "اگر کاربر تسک یا برنامه‌ریزی خواست، کمکش کن و اگر شد پیشنهاد بده که با دکمه‌ی «ساخت با AI» تسک بسازد.",
+    `کاربر: ${displayName(me)}.`,
+    `تسک‌های بازِ او الان:\n${taskSummary}`,
+    `امروز: ${todayTehranISO()}`,
+  ].join("\n");
+
+  try {
+    const model = env.AI_MODEL || "@cf/meta/llama-4-scout-17b-16e-instruct";
+    const raw = (await (env.AI as unknown as { run: (m: string, i: unknown) => Promise<unknown> }).run(model, {
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: text },
+      ],
+    })) as { response?: unknown; choices?: { message?: { content?: unknown } }[] };
+    let out = typeof raw?.response === "string" ? raw.response : raw?.choices?.[0]?.message?.content;
+    if (typeof out === "string" && out.trim()) {
+      return { type: "text", text: out.trim().slice(0, 700) };
+    }
+  } catch {
+    // بی‌صدا به جواب پیش‌فرض
+  }
+  return { type: "text", text: `${displayName(me)} جان، الان مغزم هنگ کرد! یک بار دیگه بپرس — یا از دکمه‌ی «ساخت با AI» برای ساختن تسک استفاده کن.` };
 }
 
 async function usersInfo(env: Env, tasks: TaskRow[]): Promise<{ id: number; name: string }[]> {
