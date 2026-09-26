@@ -155,7 +155,7 @@ describe("📤 خروجی و فلوهای زبانی (محیط ایزوله)", (
   it("/edit یادآوری: تغییر به «هر ۲ ساعت» → شمارنده‌ها صفر و یادآوریِ جدید کار می‌کند", async () => {
     await h.say(MOHAMMAD, "احمق یه تسک بساز: تست ویرایش یادآوری، تا ۴ روز دیگه");
     const t = h.tasks().at(-1)!;
-    expect(t.reminder_type).toBe("default");
+    expect(t.reminder_type).toBe("none"); // بدون درخواستِ صریح → ساکت
 
     await h.say(MOHAMMAD, `/edit ${t.id} یادآوری: هر ۲ ساعت`);
     const t2 = h.task(t.id)!;

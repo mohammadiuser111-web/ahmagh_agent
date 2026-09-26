@@ -21,7 +21,7 @@ describe("🏁 ماراتن ۷ روزه (محیط ایزوله)", () => {
   it("همه‌ی الگوها با هم، ۷ روز، بی‌خطا و با شمار دقیق", async () => {
     // 🧑 کاربرها تسک می‌سازند
     await h.say(ALI, "احمق یه تسک بساز: مرور شبانه، تا ۱۰ روز دیگه — هر روز ساعت ۲۲ یادم کن");
-    await h.say(ALI, "احمق یه تسک بساز: پیش‌فرض، تا ۲ روز دیگه"); // الگوریتم پلکانی
+    await h.say(ALI, "احمق یه تسک بساز: پیش‌فرض، تا ۲ روز دیگه"); // بدون یادآوریِ خواسته‌شده → ساکت
     await h.say(MOHAMMAD, "احمق یه تسک بساز: چک سرور، تا ۱۰ روز دیگه، هر ۵ ساعت یادم کن");
     await h.say(MOHAMMAD, "احمق یه تسک بساز: ساکت، تا امروز، یادآوری نکن");
     await h.say(ALI, "احمق یه تسک بساز: یک‌بارگی، تا هفته آینده — فردا ساعت ۹ صبح یادم بنداز");
@@ -53,10 +53,9 @@ describe("🏁 ماراتن ۷ روزه (محیط ایزوله)", () => {
     expect(aliTexts.filter((x) => x.includes("یادآوری برای")).length).toBe(1);
     // خاموش: تسکِ «ساکت» هرگز یادآوری نمی‌گیرد
     expect(mmdTexts.some((x) => x.includes("ساکت"))).toBe(false);
-    // پلکانی پیش‌فرض: بعد از سررسید هر ۲ ساعت اذیت می‌کند (اسکیلیشن)
+    // پیش‌فرض (بدون یادآوریِ خواسته‌شده): هرگز اذیت نمی‌کند — حتی بعد از سررسید
     const aliAll = h.texts(ALI.id).slice(aliDefault);
-    const escalations = aliAll.filter((x) => x.includes("پیش‌فرض")).length;
-    expect(escalations).toBeGreaterThanOrEqual(50);
+    expect(aliAll.filter((x) => x.includes("پیش‌فرض")).length).toBe(0);
     // 🚀 شروع خودکار: یک «وقتش رسید»
     expect(mmdTexts.filter((x) => x.includes("وقتش رسید"))).toHaveLength(1);
 

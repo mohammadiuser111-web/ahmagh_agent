@@ -97,7 +97,7 @@ function systemPrompt(today: string, todayJalali: string, knownUsers: string): s
     '  • "before_deadline" — «۱ ساعت قبل از ددلاین پیام بده» → reminder_hours=1 (hours before the deadline).',
     '  • "once" — «فردا ساعت ۱۰ صبح یادم بنداز» → reminder_time="10:00".',
     '  • "none" — «یادآوری نکن».',
-    '  • "" — no reminder wording at all.',
+    '  • "" — no reminder wording → NO reminders at all. Silence is the default; never invent reminders.',
     "- reminder_hours: a number (interval hours OR hours-before-deadline depending on kind), else 0.",
     '- status: "not_started" unless work already started («شروع کردم») or finished («انجام دادم», «تمومه»).',
     "",

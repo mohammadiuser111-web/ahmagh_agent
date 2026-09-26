@@ -92,8 +92,9 @@ describe("reminderSpecText", () => {
     ...o,
   });
 
-  it("none → خاموش", () => {
-    expect(reminderSpecText(spec({}))).toBe("خاموش (بدون یادآوری)");
+  it("none/default → روی کارت هیچ نمایشی ندارد (سکوت پیش‌فرض)", () => {
+    expect(reminderSpecText(spec({}))).toBeNull();
+    expect(reminderSpecText(spec({ reminder_type: "default" }))).toBeNull();
   });
 
   it("daily → «هر روز ساعت ۰۸:۰۰»", () => {

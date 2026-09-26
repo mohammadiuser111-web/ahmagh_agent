@@ -143,7 +143,7 @@ export async function createTask(env: Env, t: NewTask): Promise<TaskRow | null> 
       t.due_date,
       t.due_at,
       t.auto_start ? 1 : 0,
-      r ? r.type : "default",
+      r ? r.type : "none", // بدون درخواستِ صریح → هیچ یادآوری‌ای نیست
       r ? r.time : null,
       r ? r.interval_hours : null,
       r ? r.lead_minutes : null,

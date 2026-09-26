@@ -1,6 +1,10 @@
 /**
- * موتور یادآوری — با Cron Trigger هر ۱۰ دقیقه اجرا می‌شود
- * و برای تسک‌های باز، متناسب با فاصله تا سررسید به «مسئول» پیام می‌دهد.
+ * موتور یادآوری — با Cron Trigger هر دقیقه اجرا می‌شود.
+ *
+ * اصل طلایی: یادآوری «فقط» وقتی می‌رود که کاربر خودش الگو را خواسته باشد
+ * (هر روز ساعت ۸ / هر ۳ ساعت / ۱ ساعت قبل از ددلاین / فردا ساعت ۵ …).
+ * بدون درخواستِ صریح → سکوت مطلق (حتی بعد از سررسید).
+ * تسک‌های قدیمیِ «default» هم مثل «none» ساکت‌اند.
  */
 import type { Env, TaskRow, UserRow } from "./types";
 import { getUser, tasksToAutoStart } from "./db";
@@ -8,42 +12,6 @@ import { escapeHtml, sendMessage } from "./telegram";
 import { displayName, truncate } from "./format";
 import { endOfDayTehran, faDigits, fmtDate, humanizeHoursLeft, startOfDayTehran, todayTehranISO } from "./dates";
 import { reminderSpecText } from "./dates";
-
-/** بازه‌های یادآوری بر حسب ساعت */
-export const REMINDER_INTERVALS_HOURS = {
-  overdue: 2,      // سررسید گذشته → هر ۲ ساعت
-  dueSoon24h: 4,   // کمتر از ۲۴ ساعت مانده → هر ۴ ساعت
-  dueSoon72h: 12,  // ۱ تا ۳ روز مانده → هر ۱۲ ساعت
-  normal: 24,      // بیش از ۳ روز مانده → هر ۲۴ ساعت
-  noDueDate: 48,   // بدون تاریخ پایان → هر ۴۸ ساعت
-} as const;
-
-/**
- * الگوریتم یادآوری:
- * - تسک تمام‌شده → هیچ یادآوری‌ای نیست.
- * - تاریخ شروعِ آینده → قبل از رسیدن روزِ شروع اذیت نمی‌کند.
- * - با نزدیک شدن سررسید، بازه‌ها کوتاه‌تر می‌شوند و بعد از سررسید تند می‌شود.
- */
-export function reminderIntervalHours(
-  task: Pick<TaskRow, "status" | "start_date" | "start_at" | "due_date" | "due_at">,
-  now: number = Date.now()
-): number | null {
-  if (task.status === "done") return null;
-  // قبل از موعدِ شروع اذیت نکن (اگر ساعت دقیق گفته شده، همان لحظه ملاک است)
-  if (task.start_at && now < Date.parse(task.start_at)) return null;
-  if (task.start_date && now < startOfDayTehran(task.start_date)) return null;
-
-  let dueAt: number;
-  if (task.due_at) dueAt = Date.parse(task.due_at);
-  else if (task.due_date) dueAt = endOfDayTehran(task.due_date);
-  else return REMINDER_INTERVALS_HOURS.noDueDate;
-
-  if (now > dueAt) return REMINDER_INTERVALS_HOURS.overdue;
-  const hoursLeft = (dueAt - now) / 3_600_000;
-  if (hoursLeft <= 24) return REMINDER_INTERVALS_HOURS.dueSoon24h;
-  if (hoursLeft <= 72) return REMINDER_INTERVALS_HOURS.dueSoon72h;
-  return REMINDER_INTERVALS_HOURS.normal;
-}
 
 /**
  * لحظه‌ی موعدِ یادآوری برای یک تسک با الگوی داینامیک — یا null اگر هنوز وقتش نرسیده.
@@ -122,31 +90,14 @@ export async function runReminders(env: Env): Promise<void> {
   let sent = 0;
   for (const task of results) {
     try {
-      let fire = false;
-      let once = false;
-      let head: string | null = null;
+      // فقط الگوهای صریحِ کاربر شلیک می‌کنند؛ default/none ساکت‌اند
+      const d = dynamicDue(task, Date.now());
+      if (!d.fire) continue;
 
-      if (task.reminder_type && task.reminder_type !== "default") {
-        const d = dynamicDue(task, Date.now());
-        fire = d.fire;
-        once = d.once;
-        head = d.text;
-      } else {
-        // الگوریتم پلکانی پیش‌فرض
-        const intervalHours = reminderIntervalHours(task);
-        if (intervalHours == null) continue;
-        const lastRemindedMs = task.last_reminded_at ? Date.parse(task.last_reminded_at) : 0;
-        const elapsedHours = (Date.now() - lastRemindedMs) / 3_600_000;
-        if (elapsedHours < intervalHours) continue;
-        fire = true;
-      }
-
-      if (!fire) continue;
-
-      const delivered = await sendReminder(env, task, head);
+      const delivered = await sendReminder(env, task, d.text);
       if (delivered) sent++;
       await env.DB.prepare(
-        once
+        d.once
           ? "UPDATE tasks SET last_reminded_at = ?, reminder_count = reminder_count + 1, reminder_done = 1 WHERE id = ?"
           : "UPDATE tasks SET last_reminded_at = ?, reminder_count = reminder_count + 1 WHERE id = ?"
       )
@@ -180,54 +131,19 @@ async function sendReminder(env: Env, task: TaskRow, head: string | null): Promi
 function reminderText(task: TaskRow, assignee: UserRow | null, dynamicHead: string | null): string {
   const title = escapeHtml(truncate(task.title, 80));
   const id = task.id;
-  const now = Date.now();
-  const count = task.reminder_count;
-
-  if (dynamicHead !== null) {
-    // 🔔 یادآوری داینامیک — الگویی که خود کاربر خواسته
-    const spec = reminderSpecText(task);
-    return [
-      dynamicHead,
-      `تسک «${title}» — 🆔 ${faDigits(id)}`,
-      task.due_at || task.due_date ? `🏁 سررسید: ${fmtDate(task.due_date)}${task.due_at ? ` — ساعت ${faDigits(task.due_at.slice(11, 16))}` : ""}` : "",
-      spec ? `🔔 الگو: ${escapeHtml(spec)}` : "",
-    ]
-      .filter((l) => l !== "")
-      .join("\n");
-  }
-
-  let head: string;
-  if (task.due_date && now > endOfDayTehran(task.due_date)) {
-    // سررسید گذشته — لحن کم‌کم تند می‌شود
-    head =
-      count < 3
-        ? `⏰ <b>یادآوری</b> — تسک «${title}» زمانش گذشته!`
-        : count < 8
-          ? `😤 تعارف رو بذار کنار؛ تسک «${title}» هنوز تموم نشده!`
-          : `🚨 چقدر قراره فرار کنی؟! تسک «${title}» هنوز اونجاست و منتظرته!`;
-  } else if (task.due_date) {
-    const hoursLeft = (endOfDayTehran(task.due_date) - now) / 3_600_000;
-    head =
-      hoursLeft <= 24
-        ? `⏳ زمان داره تموم می‌شه! تسک «${title}» ${humanizeHoursLeft(hoursLeft)} دیگه سررسیده.`
-        : `🔔 <b>یادآوری تسک</b> «${title}» — سررسید: ${fmtDate(task.due_date)}`;
-  } else {
-    head = `📌 تسک «${title}» سررسید مشخصی نداره؛ کی می‌خوای دست بگیریش؟`;
-  }
-
-  const tail =
-    task.status === "not_started"
-      ? "هنوز شروعش هم نکردی که! 🐌"
-      : "دیدی تا کجا رسوندیش، ادامهش بده 💪";
-
   const who = assignee ? `${displayName(assignee)}، ` : "";
+  // یادآوریِ الگویی — همان که کاربر خواسته
+  const spec = reminderSpecText(task);
   return [
-    `${who}هوات هست 👀`,
-    head,
-    "",
-    tail,
-    `🆔 شناسه: ${faDigits(id)}`,
-  ].join("\n");
+    dynamicHead ?? "<b>یادآوری</b>",
+    `${who}تسک «${title}» — شناسه ${faDigits(id)}`,
+    task.due_at || task.due_date
+      ? `سررسید: ${fmtDate(task.due_date)}${task.due_at ? ` — ساعت ${faDigits(task.due_at.slice(11, 16))}` : ""}`
+      : "",
+    spec ? `الگو: ${escapeHtml(spec)}` : "",
+  ]
+    .filter((l) => l !== "")
+    .join("\n");
 }
 
 /**

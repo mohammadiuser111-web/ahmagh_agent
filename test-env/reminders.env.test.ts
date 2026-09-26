@@ -113,14 +113,19 @@ describe("🔔 یادآوری داینامیک (محیط ایزوله)", () => {
     expect(h.texts(MOHAMMAD.id).length).toBe(before + 1); // فقط همان یک‌بار
   });
 
-  it("الگوریتم پلکانی پیش‌فرض (رگرسیون): سررسید ~۳۸ ساعته → هر ۱۲ ساعت", async () => {
+  it("بدون درخواستِ کاربر → سکوت مطلق (حتی نزدیک و بعد از سررسید؛ رگرسیون الگوریتم پلکانی)", async () => {
     await h.say(ALI, "احمق یه تسک بساز: مرور کدهای قدیمی، تا فردا");
     const t = h.tasks().at(-1)!;
-    expect(t.reminder_type).toBe("default");
+    expect(t.reminder_type).toBe("none"); // پیش‌فرضِ جدید = هیچ یادآوری‌ای نیست
     const before = h.texts(ALI.id).length;
-    await h.advance(12 * 3600_000 + 10 * 60_000);
-    expect(h.texts(ALI.id).length).toBe(before + 1);
-    expect(h.lastText(ALI.id)).toMatch(/یادآوری|زمان داره|تموم می‌شه/);
+    await h.advance(12 * 3600_000 + 10 * 60_000); // ~۱۲ ساعت مانده به ددلاین
+    expect(h.texts(ALI.id).length).toBe(before); // سکوت
+    await h.advance(3 * 24 * 3600_000); // حتی ۳ روز بعد از سررسید
+    expect(h.texts(ALI.id).length).toBe(before); // باز هم سکوت
+    // تسک‌های قدیمیِ «default» (داده‌ی پرود قبل از این تغییر) هم ساکت‌اند
+    (h.env.DB as any).raw("UPDATE tasks SET reminder_type='default' WHERE id=?").run(t.id);
+    await h.advance(24 * 3600_000);
+    expect(h.texts(ALI.id).length).toBe(before);
   });
 
   it("تموم‌کردن تسک → همه‌ی یادآوری‌ها خاموش", async () => {

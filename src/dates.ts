@@ -423,7 +423,8 @@ export function reminderSpecText(spec: {
 }): string | null {
   switch (spec.reminder_type) {
     case "none":
-      return "خاموش (بدون یادآوری)";
+    case "default":
+      return null; // سکوت پیش‌فرض — روی کارت چیزی نشان نمی‌دهیم
     case "daily":
       return `هر روز ساعت ${faDigits(spec.reminder_time ?? "")}`;
     case "every_hours":
@@ -440,7 +441,7 @@ export function reminderSpecText(spec: {
     case "once":
       return spec.reminder_at ? `یک‌بار — ${fmtDateTimeFa(spec.reminder_at)}` : null;
     default:
-      return null; // default → روی کارت نمایش نمی‌دهیم
+      return null;
   }
 }
 
