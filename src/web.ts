@@ -398,6 +398,19 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     }
   }
 
+  // ---- بچسباندن دوباره‌ی وبهوک (ادمین؛ برای تغییر دامنه) ----
+  if (path === "/api/admin/rebind-webhook" && method === "POST") {
+    if (!isAdmin(me)) return json({ ok: false, error: "forbidden" }, 403);
+    const body = await readBody(request);
+    const raw = String(body?.url ?? "");
+    const base = raw.endsWith("/") ? raw.slice(0, -1) : raw;
+    if (!base.startsWith("https://")) return json({ ok: false, error: "آدرس نامعتبر است." }, 422);
+    const { setWebhook } = await import("./telegram");
+    const res = await setWebhook(env, `${base}/webhook`, env.WEBHOOK_SECRET);
+    const ok = !!(res && (res as any).ok);
+    return json({ ok, error: ok ? undefined : "تلگرام قبول نکرد — آدرس و اینترنت را چک کن." });
+  }
+
   // ---- گزارش (همان موتور خروجی HTML بات) ----
   if (path === "/api/report" && method === "GET") {
     const scope = url.searchParams.get("scope") === "all" && isAdmin(me) ? "all" : "mine";

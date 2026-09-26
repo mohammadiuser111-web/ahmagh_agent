@@ -172,9 +172,12 @@ function reminderLabel(d) {
   return null;
 }
 
-function openParseModal(d) {
+async function openParseModal(d) {
   const needDue = !d.dueDate;
   const isAdmin = state.user.role === "admin";
+  if (isAdmin && !state.users.length) {
+    try { state.users = (await api("/api/users")).users; } catch {}
+  }
   $("#parseBody").innerHTML = `
     <div class="kv">
       <span>عنوان</span><div><b>${esc(d.title)}</b></div>
@@ -182,7 +185,9 @@ function openParseModal(d) {
       <span>شروع</span><div>${esc(d.startDate)}${d.startAt ? ` — ساعت ${faDigits(d.startAt.slice(11, 16))}` : ""}</div>
       <span>سررسید</span><div id="dueCell">${d.dueDate ? `<b>${esc(d.dueDate)}</b>${d.dueAt ? ` — ساعت ${faDigits(d.dueAt.slice(11, 16))}` : ""}` : `<span class="muted">نگفتی!</span>`}</div>
       <span>یادآوری</span><div>${reminderLabel(d) ? `🔔 ${esc(reminderLabel(d))}` : `<span class="muted">ساکت (فقط با خواسته‌ی تو)</span>`}</div>
-      ${isAdmin ? `<span>مسئول</span><div id="asgCell">${esc(d.assigneeName || state.user.name)}</div>` : ""}
+      ${isAdmin && state.users.length ? `<span>مسئول</span><div id="asgCell"><select id="asgSelect">
+        ${state.users.map((u) => `<option value="${u.id}" ${u.id === d.assigneeId ? "selected" : ""}>${esc(u.name)}</option>`).join("")}
+      </select></div>` : ""}
     </div>
     ${needDue ? `
     <label class="field"><span>تا کی باید تموم بشه؟</span>
@@ -363,6 +368,18 @@ function applyTheme(t) {
 }
 
 /* ---------------- راه‌اندازی ---------------- */
+/** اسکریپت تلگرام را بدون قفل‌کردن صفحه لود کن — داخل تلگرام سریع می‌آید، بیرونش مهم نیست */
+function loadTelegramScript() {
+  return new Promise((resolve) => {
+    if (window.Telegram?.WebApp) return resolve();
+    const s = document.createElement("script");
+    s.src = "https://telegram.org/js/telegram-web-app.js";
+    s.onload = () => resolve();
+    s.onerror = () => resolve(); // بیرون از تلگرام/بدون فیلتر — مهم نیست
+    document.head.appendChild(s);
+  });
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
   applyTheme(localStorage.getItem("ah_theme") || "dark");
   $("#themeBtn").onclick = () => applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
@@ -387,5 +404,13 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") $$(".modal").forEach((m) => m.classList.add("hidden")); });
 
   // ورود: اول تلگرام (دکمه‌ی 🌐 داخل بات)، بعد کوکی‌ی قبلی، بعد فرم
-  if (!(await webappLogin())) await tryMe();
+  // ⛔ مهم: در هر صورت یک ویو باز شود — صفحه‌ی خالی هرگز
+  try {
+    await Promise.race([loadTelegramScript(), new Promise((r) => setTimeout(r, 2500))]);
+    if (!(await webappLogin())) {
+      if (!(await tryMe())) showAuth();
+    }
+  } catch {
+    showAuth();
+  }
 });

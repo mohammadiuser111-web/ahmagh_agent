@@ -217,7 +217,7 @@ async function tryPendingAuthReply(env: Env, msg: any, text: string): Promise<bo
         env,
         msg.chat.id,
         "👌 بدون اسم مستعار. هر وقت خواستی: <code>/alias اسم</code>",
-        { reply_markup: mainKeyboard(meA?.role === "admin") }
+        { reply_markup: mainKeyboard(meA?.role === "admin", env) }
       );
       return true;
     }
@@ -227,7 +227,7 @@ async function tryPendingAuthReply(env: Env, msg: any, text: string): Promise<bo
       env,
       msg.chat.id,
       `🎭 اسم مستعارت شد: <b>${escapeHtml(alias)}</b>\nادمین حالا می‌تونه بگه «برای ${escapeHtml(alias)} یه تسک بساز» 👌`,
-      { reply_markup: mainKeyboard(meA?.role === "admin") }
+      { reply_markup: mainKeyboard(meA?.role === "admin", env) }
     );
     return true;
   }
@@ -246,10 +246,10 @@ async function tryPendingAuthReply(env: Env, msg: any, text: string): Promise<bo
         env,
         msg.chat.id,
         `${result}\n\n🎭 <b>اسم مستعارت چیه؟</b>\nاین اسم را ادمین به جای @ برای واگذاری تسک به تو می‌بیند (مثلاً: ایمان).\n(اگه فعلاً نمی‌خوای، بفرست: -)`,
-        { reply_markup: mainKeyboard(me?.role === "admin") }
+        { reply_markup: mainKeyboard(me?.role === "admin", env) }
       );
     } else {
-      await sendMessage(env, msg.chat.id, result, { reply_markup: mainKeyboard(me?.role === "admin") });
+      await sendMessage(env, msg.chat.id, result, { reply_markup: mainKeyboard(me?.role === "admin", env) });
     }
   } else {
     await sendMessage(env, msg.chat.id, result);
@@ -279,10 +279,9 @@ export async function handleUpdate(env: Env, update: unknown): Promise<void> {
 // ============================================================
 
 /** منوی اصلی — دکمه‌های آماده (کیبورد دائمی تلگرام) */
-/** آدرس وب‌اپ — همان ورکر، رابط وب */
-const WEB_APP_URL = "https://ahmagh-agent.nova-0e7442.workers.dev";
-
-function mainKeyboard(isAdmin: boolean) {
+function mainKeyboard(isAdmin: boolean, env?: Env) {
+  // آدرس وب‌اپ — از متغیر محیطی؛ اگر نبود همان ورکر اصلی
+  const WEB_APP_URL = env?.WEB_APP_URL || "https://ahmagh-agent.nova-0e7442.workers.dev";
   const rows: ({ text: string; web_app?: { url: string } } | never)[][] = [
     [{ text: "🗂 مدیریت تسک" }, { text: "📊 گزارش" }],
   ];
@@ -398,7 +397,7 @@ async function onMenuButton(env: Env, msg: any, text: string): Promise<boolean> 
       );
       return true;
     case "back":
-      await sendMessage(env, msg.chat.id, "🎛 منوی اصلی", { reply_markup: mainKeyboard(isAdmin) });
+      await sendMessage(env, msg.chat.id, "🎛 منوی اصلی", { reply_markup: mainKeyboard(isAdmin, env) });
       return true;
     case "logout":
       await sendMessage(env, msg.chat.id, "🚪 مطمئنی که می‌خوای از حسابت خارج بشی؟\n(ثبت‌نامت پاک نمی‌شود؛ با «ورود» برمی‌گردی)", {
@@ -413,7 +412,7 @@ async function onMenuButton(env: Env, msg: any, text: string): Promise<boolean> 
       await sendDeleteUserList(env, msg);
       return true;
     case "help":
-      await sendMessage(env, msg.chat.id, HELP, { reply_markup: mainKeyboard(isAdmin) });
+      await sendMessage(env, msg.chat.id, HELP, { reply_markup: mainKeyboard(isAdmin, env) });
       return true;
   }
   return false;
@@ -647,7 +646,7 @@ async function onCommand(env: Env, msg: any, text: string): Promise<void> {
         return;
       }
       const me0 = await getUser(env, msg.from.id);
-      await sendMessage(env, chatId, WELCOME, { reply_markup: mainKeyboard(me0?.role === "admin") });
+      await sendMessage(env, chatId, WELCOME, { reply_markup: mainKeyboard(me0?.role === "admin", env) });
       return;
     }
     case "/menu": {
@@ -657,7 +656,7 @@ async function onCommand(env: Env, msg: any, text: string): Promise<void> {
         env,
         chatId,
         `<b>منوی احمق‌ایجنت</b>\n\n🗂 مدیریت تسک — ساخت، ویرایش، حذف و تسک‌های من\n🕘 تاریخچه — تسک‌های تموم‌شده\n📊 گزارش — خروجی HTML از تسک‌ها\n🚪 خروج — خروج از حساب${isAdmin1 ? "\n👑 ادمین: 👥 کاربرها · 🌐 تسک‌های همه · 🗑 حذف کاربر · 📈 مصرف و هزینه" : ""}\n\nیا مثل همیشه طبیعی حرف بزن.`,
-        { reply_markup: mainKeyboard(isAdmin1) }
+        { reply_markup: mainKeyboard(isAdmin1, env) }
       );
       return;
     }
@@ -1958,7 +1957,7 @@ async function onCallbackQuery(env: Env, cq: any): Promise<void> {
     if (await isAuthed(env, from.id)) {
       await answerCallbackQuery(env, cq.id, "همین الان هم داخل هستی");
       const meA = await getUser(env, from.id);
-      await sendMessage(env, msg.chat.id, "سلام دوباره!", { reply_markup: mainKeyboard(meA?.role === "admin") });
+      await sendMessage(env, msg.chat.id, "سلام دوباره!", { reply_markup: mainKeyboard(meA?.role === "admin", env) });
       return;
     }
     const mode = parts[1] === "reg" ? "register" : "login";

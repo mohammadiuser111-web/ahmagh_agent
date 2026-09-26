@@ -42,6 +42,8 @@
   // متغیرهای عمومی (غیرحساس) — مقادیر حساس فقط از طریق `wrangler secret put`
   "vars": {
     "TELEGRAM_BOT_USERNAME": "ahmagh_agent_bot",
+    // آدرس وب‌اپ برای دکمه‌ی «🌐 نسخه وب» بات
+    "WEB_APP_URL": "https://ahmagh-agent.nova-0e7442.workers.dev",
     // مدل هوش مصنوعی — llama-3.3-70b (رایگان و بدون محدودیت پلن)
     "AI_MODEL": "@cf/meta/llama-4-scout-17b-16e-instruct",
     "AI_FALLBACK_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",

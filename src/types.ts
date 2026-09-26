@@ -15,6 +15,8 @@ export interface Env {
   WEBHOOK_SECRET: string;
   /** یوزرنیم بات (متغیر عمومی) */
   TELEGRAM_BOT_USERNAME: string;
+  /** آدرس عمومی وب‌اپ — دکمه‌ی 🌐 بات (متغیر عمومی) */
+  WEB_APP_URL?: string;
   /** «1» = گزارش روزانه‌ی ۸ صبح/شب خاموش (پیش‌فرض: روشن) */
   DIGEST_DISABLED?: string;
   /** گزارش مصرف: توکن کلادفلر با دسترسی خواندنِ آنالیتیکس (secret) */
