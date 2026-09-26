@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="fa" dir="rtl" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<title>احمق‌ایجنت — مدیریت تسک</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230f766e'/%3E%3Ctext x='32' y='44' font-size='34' text-anchor='middle' fill='%23d1faf3' font-family='Tahoma'%3E%D8%A7%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="app.css">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+
+<!-- ═══════════════ ورود ═══════════════ -->
+<div id="authView" class="auth-wrap hidden">
+  <div class="auth-card">
+    <div class="logo-badge">ا</div>
+    <h1>احمق‌ایجنت</h1>
+    <p class="auth-sub">همان دستیار تلگرامت — حالا با ظاهری بهتر</p>
+    <form id="loginForm" autocomplete="on">
+      <label class="field">
+        <span>نام کاربری</span>
+        <input id="loginUser" name="username" autocomplete="username" dir="ltr" placeholder="username" required>
+      </label>
+      <label class="field">
+        <span>رمز عبور</span>
+        <input id="loginPass" name="password" type="password" autocomplete="current-password" dir="ltr" placeholder="••••••••" required>
+      </label>
+      <div id="loginError" class="form-error hidden"></div>
+      <button class="btn btn-primary btn-block" id="loginBtn" type="submit">ورود</button>
+    </form>
+    <p class="auth-hint">همان نام کاربری و رمزی که موقع ثبت‌نام در بات انتخاب کردی.<br>نام کاربری نداری؟ داخل تلگرام این را بفرست: <span dir="ltr">/register</span> یوزرنیم رمز<br>یا از دکمه‌ی «🌐 نسخه وب» داخل بات، بدون رمز وارد شو.</p>
+  </div>
+</div>
+
+<!-- ═══════════════ اپ ═══════════════ -->
+<div id="appView" class="app hidden">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo-badge small">ا</div>
+      <div class="brand-name">احمق‌ایجنت</div>
+    </div>
+    <nav class="nav" id="sideNav">
+      <button class="nav-item active" data-view="tasks"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h7"/></svg>تسک‌ها</button>
+      <button class="nav-item" data-view="history"><svg viewBox="0 0 24 24"><path d="M12 8v4l3 3M3 12a9 9 0 1 0 3-6.7M3 4v4h4"/></svg>تاریخچه</button>
+      <button class="nav-item" data-view="report"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M21 20H3"/></svg>گزارش</button>
+    </nav>
+    <div class="sidebar-foot">
+      <div class="who" id="whoBox"></div>
+      <div class="foot-actions">
+        <button class="icon-btn" id="themeBtn" title="تم روشن/تاریک"><svg viewBox="0 0 24 24"><path d="M21 13A8.5 8.5 0 1 1 11 3a7 7 0 0 0 10 10z"/></svg></button>
+        <button class="icon-btn" id="logoutBtn" title="خروج"><svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg></button>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <!-- ═══ تسک‌ها ═══ -->
+    <section id="view-tasks" class="view">
+      <header class="view-head">
+        <h2 id="greet">تسک‌ها</h2>
+        <div class="stats" id="statsRow"></div>
+      </header>
+
+      <div class="quickadd">
+        <input id="quickInput" placeholder="مثل بات حرف بزن… مثلاً: تهیه گزارش فروش تا پنجشنبه، هر روز ساعت ۸ یادم بنداز" autocomplete="off">
+        <button class="btn btn-primary" id="quickBtn">ساخت با AI</button>
+      </div>
+
+      <div id="taskGroups" class="groups"></div>
+    </section>
+
+    <!-- ═══ تاریخچه ═══ -->
+    <section id="view-history" class="view hidden">
+      <header class="view-head">
+        <h2>تاریخچه</h2>
+        <span class="muted" id="historyCount"></span>
+      </header>
+      <div id="historyList" class="groups"></div>
+    </section>
+
+    <!-- ═══ گزارش ═══ -->
+    <section id="view-report" class="view hidden">
+      <header class="view-head">
+        <h2>گزارش</h2>
+        <div class="seg" id="reportScope">
+          <button class="seg-item active" data-scope="mine">تسک‌های من</button>
+          <button class="seg-item" data-scope="all" id="reportAllBtn">همه</button>
+        </div>
+      </header>
+      <div class="report-wrap card">
+        <iframe id="reportFrame" title="گزارش"></iframe>
+      </div>
+    </section>
+  </main>
+
+  <nav class="bottomnav" id="bottomNav">
+    <button class="nav-item active" data-view="tasks"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h7"/></svg>تسک‌ها</button>
+    <button class="nav-item" data-view="history"><svg viewBox="0 0 24 24"><path d="M12 8v4l3 3M3 12a9 9 0 1 0 3-6.7M3 4v4h4"/></svg>تاریخچه</button>
+    <button class="nav-item" data-view="report"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M21 20H3"/></svg>گزارش</button>
+  </nav>
+</div>
+
+<!-- ═══════════════ مودال پیش‌نمایش ساخت ═══════════════ -->
+<div id="parseModal" class="modal hidden">
+  <div class="modal-box">
+    <h3>پیش‌نمایش تسک</h3>
+    <div id="parseBody"></div>
+  </div>
+</div>
+
+<!-- ═══════════════ مودال جزئیات/ویرایش ═══════════════ -->
+<div id="taskModal" class="modal hidden">
+  <div class="modal-box">
+    <div class="modal-head">
+      <h3 id="taskModalTitle">جزئیات تسک</h3>
+      <button class="icon-btn" id="taskModalClose">✕</button>
+    </div>
+    <div id="taskBody"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+<div id="loader" class="loader hidden"><div class="spin"></div></div>
+
+<script src="app.js"></script>
+</body>
+</html>

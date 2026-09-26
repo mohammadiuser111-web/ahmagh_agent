@@ -3,6 +3,8 @@
  */
 
 export interface Env {
+  /** فایل‌های استاتیک وب‌اپ (public/) */
+  ASSETS?: Fetcher;
   /** اتصال D1 — دیتابیس تسک‌ها و کاربرها */
   DB: D1Database;
   /** اتصال Workers AI — استخراج ساختار تسک از زبان طبیعی */

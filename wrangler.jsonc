@@ -6,6 +6,13 @@
   "main": "src/index.ts",
   "compatibility_date": "2025-09-01",
 
+  // 🌐 وب‌اپ — فایل‌های استاتیک از public/ سرو می‌شوند؛ مسیرهای API/وبهوک اول به ورکر می‌روند
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*", "/webhook", "/set-webhook", "/health"]
+  },
+
   // دیتابیسِ موجود اکانت (همه‌ی دیتابیس‌های قبلی خالی بودند؛ دیتابیس جدید نساخته شد)
   // اگر دیتابیس دیگری می‌خواهید، database_name و database_id را عوض کنید.
   "d1_databases": [

@@ -4,7 +4,9 @@
  * مسیرها:
  * - POST /webhook              ← وبهوک تلگرام (محافظت‌شده با X-Telegram-Bot-Api-Secret-Token)
  * - GET  /set-webhook?key=…    ← ثبت خودکار وبهوک روی آدرس همین ورکر
- * - GET  /health (یا /)        ← سلامت‌سنجی
+ * - GET  /health               ← سلامت‌سنجی
+ * - /api/*                     ← API وب‌اپ (src/web.ts)
+ * - بقیه‌ی مسیرها               ← فایل‌های استاتیک وب‌اپ (public/)
  *
  * رویداد scheduled:
  * - هر دقیقه ← موتور یادآوری
@@ -16,6 +18,7 @@ import { cleanupPendingTasks } from "./db";
 import { runAutoStart, runReminders } from "./reminders";
 import { digestWindow, runDigest } from "./digest";
 import { setWebhook } from "./telegram";
+import { handleApi } from "./web";
 
 export default {
   async fetch(request, env, ctx) {
@@ -44,7 +47,10 @@ export default {
 
     if (url.pathname === "/set-webhook") return handleSetWebhook(request, env, url);
 
-    if (url.pathname === "/" || url.pathname === "/health") {
+    // 🔗 API وب‌اپ — همان مغز بات، با رابط JSON
+    if (url.pathname.startsWith("/api/")) return handleApi(request, env);
+
+    if (url.pathname === "/health") {
       return Response.json({
         ok: true,
         bot: "ahmagh_agent",
@@ -53,6 +59,8 @@ export default {
       });
     }
 
+    // 🌐 وب‌اپ — فایل‌های استاتیک (public/)
+    if (env.ASSETS) return env.ASSETS.fetch(request);
     return new Response("Not Found 🤖", { status: 404 });
   },
 
