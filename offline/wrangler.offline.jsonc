@@ -1,0 +1,9 @@
+// دیپلوی حالت آفلاین: npx wrangler deploy --config offline/wrangler.offline.jsonc
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "ahmagh-agent",
+  "main": "worker.ts",
+  "compatibility_date": "2025-09-01",
+  "triggers": { "crons": ["* * * * *"] },
+  "observability": { "enabled": true }
+}
